@@ -34,7 +34,9 @@ async function createWindow() {
     icon: path.join(__dirname, "../build/icon.ico"),
   });
 
-  mainWindow.loadURL(`http://localhost:${PORT}`);
+  // 127.0.0.1 rather than localhost: the embedded server listens on IPv4
+  // loopback only, and on some Windows setups "localhost" resolves to ::1.
+  mainWindow.loadURL(`http://127.0.0.1:${PORT}`);
 }
 
 const gotLock = app.requestSingleInstanceLock();

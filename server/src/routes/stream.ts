@@ -3,6 +3,7 @@ import { Readable } from "node:stream";
 import { resolvePlexStreamUrl } from "../clients/plex.js";
 import { resolveSiloStreamUrl } from "../clients/silo.js";
 import { liveStreamUrl } from "../clients/xtream.js";
+import { isAllowedStreamUrl, rememberStreamUrl } from "../streamAllowlist.js";
 
 function isPlaylist(contentType: string, url: string): boolean {
   return /mpegurl/i.test(contentType) || /\.m3u8(\?|$)/i.test(url);
@@ -15,8 +16,13 @@ function isPlaylist(contentType: string, url: string): boolean {
 // the browser. Playlists are rewritten so every segment/key/nested-playlist reference
 // routes back through this proxy too.
 function rewritePlaylist(body: string, baseUrl: string): string {
+  // The post-redirect URL is the base for relative segment paths, and it is often
+  // a different host than the panel the user configured. Remember it, plus every
+  // host this playlist points at, so the following segment requests are allowed.
+  rememberStreamUrl(baseUrl);
   const proxied = (raw: string): string => {
     const absolute = new URL(raw, baseUrl).toString();
+    rememberStreamUrl(absolute);
     return `/api/hls?u=${encodeURIComponent(absolute)}`;
   };
 
@@ -33,19 +39,72 @@ function rewritePlaylist(body: string, baseUrl: string): string {
     .join("\n");
 }
 
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const MAX_REDIRECTS = 5;
+
+async function fetchAllowedStream(
+  targetUrl: string,
+  range?: string,
+): Promise<{ upstream: Response; finalUrl: string } | { error: "forbidden" | "unreachable" }> {
+  if (!isAllowedStreamUrl(targetUrl)) return { error: "forbidden" };
+
+  let current = targetUrl;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    let upstream: Response;
+    try {
+      upstream = await fetch(current, {
+        redirect: "manual",
+        headers: range ? { range } : undefined,
+      });
+    } catch (err) {
+      if (err instanceof TypeError) return { error: "unreachable" };
+      throw err;
+    }
+
+    if (REDIRECT_STATUSES.has(upstream.status)) {
+      const location = upstream.headers.get("location");
+      await upstream.body?.cancel().catch(() => undefined);
+      if (!location || hop === MAX_REDIRECTS) return { error: "unreachable" };
+      let next: URL;
+      try {
+        next = new URL(location, current);
+      } catch {
+        return { error: "unreachable" };
+      }
+      if (!rememberStreamUrl(next.toString())) return { error: "forbidden" };
+      current = next.toString();
+      continue;
+    }
+
+    return { upstream, finalUrl: current };
+  }
+
+  return { error: "unreachable" };
+}
+
 async function proxyHlsResource(targetUrl: string, reply: FastifyReply, range?: string) {
-  const upstream = await fetch(targetUrl, range ? { headers: { range } } : undefined);
+  const fetched = await fetchAllowedStream(targetUrl, range);
+  if ("error" in fetched) {
+    if (fetched.error === "forbidden") {
+      return reply.code(403).send({ error: "Stream host is not allowed" });
+    }
+    return reply.code(502).send({ error: "Failed to reach stream" });
+  }
+
+  const { upstream, finalUrl } = fetched;
   if (!upstream.ok && upstream.status !== 206) {
     return reply.code(502).send({ error: "Failed to reach stream" });
   }
 
   const contentType = upstream.headers.get("content-type") ?? "";
 
-  if (isPlaylist(contentType, targetUrl)) {
+  // The request URL counts as well as the post-redirect URL: panels often 302 a
+  // .m3u8 onto a CDN path that has no extension and a generic content-type.
+  if (isPlaylist(contentType, targetUrl) || isPlaylist(contentType, finalUrl)) {
     // Xtream panels 302/301 the given URL on to the real CDN edge server, so relative
-    // segment paths in the playlist must resolve against upstream.url (post-redirect),
+    // segment paths in the playlist must resolve against the post-redirect URL,
     // not the original targetUrl - the origin domain often doesn't serve segments at all.
-    const rewritten = rewritePlaylist(await upstream.text(), upstream.url);
+    const rewritten = rewritePlaylist(await upstream.text(), finalUrl);
     reply.header("content-type", "application/vnd.apple.mpegurl");
     reply.header("cache-control", "no-store");
     return reply.send(rewritten);
@@ -68,7 +127,8 @@ export async function streamRoutes(app: FastifyInstance) {
   app.get("/api/hls", async (request, reply) => {
     const { u } = request.query as { u?: string };
     if (!u) return reply.code(400).send({ error: "Missing url" });
-    return proxyHlsResource(u, reply, request.headers.range as string | undefined);
+    const range = request.headers.range;
+    return proxyHlsResource(u, reply, typeof range === "string" ? range : undefined);
   });
 
   app.get("/api/stream/:source/:id", async (request, reply) => {
@@ -113,7 +173,8 @@ export async function streamRoutes(app: FastifyInstance) {
     if (source === "live") {
       // See the comment on proxyHlsResource: live TV is HLS, played via hls.js, which
       // needs CORS on every request - so it's proxied rather than redirected.
-      return proxyHlsResource(liveStreamUrl(Number(id)), reply, request.headers.range as string | undefined);
+      const range = request.headers.range;
+      return proxyHlsResource(liveStreamUrl(Number(id)), reply, typeof range === "string" ? range : undefined);
     }
 
     if (source === "plex") {
