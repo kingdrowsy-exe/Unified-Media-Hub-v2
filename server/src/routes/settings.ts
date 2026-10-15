@@ -119,12 +119,20 @@ export async function settingsRoutes(app: FastifyInstance) {
     }
     settingsStore.setXtream({ baseUrl: cleanBaseUrl, username, password });
     bustCache("live:");
+    bustCache("xtream:");
+    bustCache("ondemand:");
+    bustCache("popular:");
+    bustCache("trakt:");
     return { ok: true };
   });
 
   app.delete("/api/settings/xtream", async () => {
     settingsStore.clearXtream();
     bustCache("live:");
+    bustCache("xtream:");
+    bustCache("ondemand:");
+    bustCache("popular:");
+    bustCache("trakt:");
     return { ok: true };
   });
 

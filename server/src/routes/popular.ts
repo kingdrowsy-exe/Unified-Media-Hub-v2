@@ -3,7 +3,7 @@ import { config } from "../config.js";
 import { cached } from "../cache.js";
 import { getPopularMovies, getPopularShows, TmdbItem } from "../clients/tmdb.js";
 import { attachOwnership, searchOwnedLibrary } from "../library.js";
-import { matchKey } from "../merge.js";
+import { pickBestMatch } from "../merge.js";
 import { NotConfiguredError } from "../settingsStore.js";
 
 export interface PopularItem {
@@ -15,7 +15,7 @@ export interface PopularItem {
   backdrop?: string;
   genre?: string;
   ratingPercent?: number;
-  sources: { source: "plex" | "silo"; id: string }[];
+  sources: { source: "plex" | "silo" | "xtream"; id: string }[];
 }
 
 function toPopularItem(t: TmdbItem): PopularItem {
@@ -52,13 +52,13 @@ export async function popularRoutes(app: FastifyInstance) {
   });
 
   app.get("/api/match", async (request) => {
-    const { title, year } = request.query as { title?: string; year?: string };
+    const { title, year, type } = request.query as { title?: string; year?: string; type?: string };
     if (!title) {
       return { sources: [] };
     }
     const { merged } = await searchOwnedLibrary(title);
-    const targetKey = matchKey(title, year ? Number(year) : undefined);
-    const match = merged.find((item) => matchKey(item.title, item.year) === targetKey);
+    const kind = type === "movie" || type === "show" ? type : undefined;
+    const match = pickBestMatch(merged, title, year ? Number(year) : undefined, kind);
     return { sources: match?.sources ?? [] };
   });
 }

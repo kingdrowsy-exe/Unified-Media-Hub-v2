@@ -4,14 +4,21 @@ import { MergedItem, PopularItem, fetchOnDemand } from "../api.js";
 import MovieDetail from "../components/MovieDetail.js";
 import Tile from "../components/Tile.js";
 
-type SourceFilter = "all" | "plex" | "silo";
+type SourceFilter = "all" | "plex" | "silo" | "xtream";
 type Playable = MergedItem | PopularItem;
+
+function sourceLabel(source: SourceFilter): string {
+  if (source === "all") return "All";
+  if (source === "plex") return "Plex";
+  if (source === "silo") return "Silo";
+  return "Xtream";
+}
 
 export default function Search() {
   const [query, setQuery] = useState("");
   const [source, setSource] = useState<SourceFilter>("all");
   const [items, setItems] = useState<MergedItem[]>([]);
-  const [sources, setSources] = useState<{ plex: boolean; silo: boolean } | null>(null);
+  const [sources, setSources] = useState<{ plex: boolean; silo: boolean; xtream: boolean } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<Playable | null>(null);
@@ -27,8 +34,8 @@ export default function Search() {
     setLoading(true);
     setError(null);
     const handle = setTimeout(() => {
-      // Searches Plex and Silo only (both are live, targeted, indexed lookups - never a
-      // full-library scan) - Live TV channels are a separate search on their own page.
+      // Plex and Silo are live indexed lookups. Xtream filters its cached movie/series
+      // catalog. Live TV channels stay on their own page.
       fetchOnDemand({ search: query, source: source === "all" ? undefined : source })
         .then((res) => {
           setItems(res.items);
@@ -44,7 +51,13 @@ export default function Search() {
     setSelectedItem({ id: `tmdb:${type}:${tmdbId}`, title: "", type, sources: [] });
   }
 
-  const noSourcesConnected = sources && !sources.plex && !sources.silo;
+  const noSourcesConnected = sources && !sources.plex && !sources.silo && !sources.xtream;
+  const connectedNames = sources
+    ? [sources.plex && "Plex", sources.silo && "Silo", sources.xtream && "Xtream"].filter(Boolean)
+    : [];
+  const missingNames = sources
+    ? [!sources.plex && "Plex", !sources.silo && "Silo", !sources.xtream && "Xtream"].filter(Boolean)
+    : [];
 
   return (
     <div className="page search-page">
@@ -58,7 +71,7 @@ export default function Search() {
           <input
             type="text"
             autoFocus
-            placeholder="Search movies and shows across Plex and Silo…"
+            placeholder="Search movies and series across Plex, Silo, and Xtream…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -71,34 +84,30 @@ export default function Search() {
 
         {hasQuery && (
           <div className="search-filters">
-            {(["all", "plex", "silo"] as const).map((s) => (
+            {(["all", "plex", "silo", "xtream"] as const).map((s) => (
               <span key={s} className={`chip ${source === s ? "active" : ""}`} onClick={() => setSource(s)}>
-                {s === "all" ? "All" : s === "plex" ? "Plex" : "Silo"}
+                {sourceLabel(s)}
               </span>
             ))}
           </div>
         )}
       </div>
 
-      {hasQuery && sources && !sources.plex && sources.silo && (
+      {hasQuery && missingNames.length > 0 && connectedNames.length > 0 && (
         <div className="notice">
-          Plex isn't connected yet — showing Silo only. <Link to="/settings">Connect Plex</Link>
-        </div>
-      )}
-      {hasQuery && sources && !sources.silo && sources.plex && (
-        <div className="notice">
-          Silo isn't connected yet — showing Plex only. <Link to="/settings">Connect Silo</Link>
+          {missingNames.join(" and ")} {missingNames.length === 1 ? "isn't" : "aren't"} connected — showing{" "}
+          {connectedNames.join(" and ")} only. <Link to="/settings">Settings</Link>
         </div>
       )}
 
-      {!hasQuery && <div className="status">Start typing to search your Plex and Silo libraries.</div>}
+      {!hasQuery && <div className="status">Start typing to search your Plex, Silo, and Xtream libraries.</div>}
 
       {hasQuery && loading && <div className="status">Searching…</div>}
       {hasQuery && !loading && error && <div className="status">Search failed: {error}</div>}
 
       {hasQuery && !loading && !error && noSourcesConnected && (
         <div className="status">
-          Neither Plex nor Silo is connected yet.
+          Plex, Silo, and Xtream aren't connected yet.
           <br />
           <Link to="/settings">Go to Settings</Link> to connect one.
         </div>

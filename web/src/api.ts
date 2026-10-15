@@ -1,13 +1,15 @@
+export type LibrarySource = "plex" | "silo" | "xtream";
+
 export interface MergedItem {
   id: string;
-  source: "plex" | "silo";
+  source: LibrarySource;
   title: string;
   year?: number;
   type: "movie" | "show";
   poster?: string;
   genre?: string;
   ratingPercent?: number;
-  sources: { source: "plex" | "silo"; id: string }[];
+  sources: { source: LibrarySource; id: string }[];
 }
 
 export interface Channel {
@@ -46,7 +48,7 @@ export interface PopularItem {
   backdrop?: string;
   genre?: string;
   ratingPercent?: number;
-  sources: { source: "plex" | "silo"; id: string }[];
+  sources: { source: LibrarySource; id: string }[];
 }
 
 export class ApiError extends Error {
@@ -94,13 +96,53 @@ async function deleteJson<T>(url: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-export function fetchOnDemand(
-  params: { search?: string; source?: string },
-): Promise<{ items: MergedItem[]; sources: { plex: boolean; silo: boolean } }> {
+export interface OnDemandCategory {
+  id: string;
+  name: string;
+}
+
+export interface XtreamEpisode {
+  id: string;
+  season: number;
+  episode: number;
+  title: string;
+  plot?: string;
+  durationSecs?: number;
+  poster?: string;
+  playback: "hls" | "file";
+}
+
+export interface XtreamSeriesDetail {
+  seriesId: number;
+  title: string;
+  poster?: string;
+  plot?: string;
+  year?: number;
+  genre?: string;
+  seasons: { number: number; name: string; cover?: string; episodeCount: number }[];
+  episodes: XtreamEpisode[];
+}
+
+export function fetchOnDemand(params: {
+  search?: string;
+  source?: string;
+  type?: "movie" | "show";
+  category?: string;
+}): Promise<{ items: MergedItem[]; sources: { plex: boolean; silo: boolean; xtream: boolean }; truncated?: boolean }> {
   const url = new URL("/api/ondemand", window.location.origin);
   if (params.search) url.searchParams.set("search", params.search);
   if (params.source) url.searchParams.set("source", params.source);
+  if (params.type) url.searchParams.set("type", params.type);
+  if (params.category) url.searchParams.set("category", params.category);
   return getJson(url.toString());
+}
+
+export function fetchOnDemandCategories(): Promise<{ vod: OnDemandCategory[]; series: OnDemandCategory[] }> {
+  return getJson("/api/ondemand/categories");
+}
+
+export function fetchSeriesDetail(seriesId: number): Promise<XtreamSeriesDetail> {
+  return getJson(`/api/ondemand/series/${seriesId}`);
 }
 
 export function fetchChannels(): Promise<{ categories: string[]; channels: Channel[] }> {
@@ -113,8 +155,8 @@ export function fetchEpg(streamId: number): Promise<{ listings: EpgListing[] }> 
   return getJson(url.toString());
 }
 
-export function streamUrlFor(source: "plex" | "silo" | "live", id: string | number): string {
-  return `/api/stream/${source}/${id}`;
+export function streamUrlFor(source: LibrarySource | "live", id: string | number): string {
+  return `/api/stream/${source}/${encodeURIComponent(String(id))}`;
 }
 
 export function fetchSettingsStatus(): Promise<SettingsStatus> {
@@ -166,7 +208,7 @@ export interface TmdbDetails {
 }
 
 export interface SourceVersion {
-  source: "plex" | "silo";
+  source: LibrarySource;
   id: string;
   serverName: string;
   filename?: string;
@@ -177,6 +219,7 @@ export interface SourceVersion {
   audioChannels?: number;
   container?: string;
   hdr?: string;
+  playback?: "hls" | "file";
   badges: string[];
 }
 
@@ -196,20 +239,27 @@ export function lookupTmdbId(
   return getJson(url.toString());
 }
 
-export function fetchSources(title: string, year?: number): Promise<{ versions: SourceVersion[] }> {
+export function fetchSources(
+  title: string,
+  year?: number,
+  type?: "movie" | "show",
+): Promise<{ versions: SourceVersion[] }> {
   const url = new URL("/api/sources", window.location.origin);
   url.searchParams.set("title", title);
   if (year) url.searchParams.set("year", String(year));
+  if (type) url.searchParams.set("type", type);
   return getJson(url.toString());
 }
 
 export function fetchMatch(
   title: string,
   year?: number,
-): Promise<{ sources: { source: "plex" | "silo"; id: string }[] }> {
+  type?: "movie" | "show",
+): Promise<{ sources: { source: LibrarySource; id: string }[] }> {
   const url = new URL("/api/match", window.location.origin);
   url.searchParams.set("title", title);
   if (year) url.searchParams.set("year", String(year));
+  if (type) url.searchParams.set("type", type);
   return getJson(url.toString());
 }
 

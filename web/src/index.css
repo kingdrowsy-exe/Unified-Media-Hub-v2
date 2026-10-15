@@ -10,6 +10,7 @@
   --accent-gradient: linear-gradient(135deg, var(--accent-2), var(--accent));
   --plex-color: #e5a00d;
   --silo-color: #2dd4bf;
+  --xtream-color: #c084fc;
   --gold: #f5c518;
   --ambient-glow: radial-gradient(ellipse 1150px 780px at 6% -12%, rgba(139, 92, 246, 0.32), transparent 58%),
     radial-gradient(ellipse 1150px 880px at 98% -8%, rgba(10, 132, 255, 0.26), transparent 58%),
@@ -320,6 +321,44 @@ a {
     grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
     gap: 20px 14px;
   }
+}
+
+.library-block {
+  margin: 8px 0 28px;
+}
+
+.library-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 18px;
+}
+
+.library-filter-gap {
+  width: 8px;
+}
+
+.library-select {
+  margin-left: auto;
+  max-width: min(320px, 100%);
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.library-status {
+  color: var(--text-muted);
+  font-size: 14px;
+  margin: 0 0 16px;
+}
+
+.library-status a {
+  color: var(--accent);
 }
 
 /* ---------- Hero ---------- */
@@ -696,6 +735,11 @@ a {
 .badge-silo {
   background: rgba(45, 212, 191, 0.18);
   color: var(--silo-color);
+}
+
+.badge-xtream {
+  background: rgba(192, 132, 252, 0.18);
+  color: var(--xtream-color);
 }
 
 .badge.connected {
@@ -1896,6 +1940,73 @@ button.secondary {
 
 .detail-section {
   margin-bottom: 32px;
+}
+
+.season-row {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 12px;
+  margin-bottom: 8px;
+}
+
+.episode-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 760px;
+}
+
+.episode-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 12px;
+  padding: 12px 14px;
+  cursor: pointer;
+}
+
+.episode-row:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.episode-num {
+  flex-shrink: 0;
+  width: 28px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.episode-copy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.episode-title {
+  font-weight: 600;
+}
+
+.episode-plot {
+  color: var(--text-muted);
+  font-size: 13px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.episode-duration {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 13px;
 }
 
 .detail-section-title {
