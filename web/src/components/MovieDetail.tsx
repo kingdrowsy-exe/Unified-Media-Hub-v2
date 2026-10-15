@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  ApiError,
   fetchDetails,
   fetchMatch,
   fetchSeriesDetail,
@@ -112,8 +113,12 @@ export default function MovieDetail({ item, onClose, onSelectSimilar }: MovieDet
           if (!cancelled) setDetails(d);
         });
       })
-      .catch(() => {
-        if (!cancelled) setError("Couldn't load details");
+      .catch((err) => {
+        // 409 is an optional service (usually TMDB) that isn't connected. The library
+        // title, Xtream plot, and episodes still render, so this isn't a playback failure.
+        if (!cancelled && !(err instanceof ApiError && err.status === 409)) {
+          setError("Couldn't load details");
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
