@@ -10,6 +10,7 @@ import {
 } from "../clients/trakt.js";
 import { bustCache } from "../cache.js";
 import { listSections } from "../clients/plex.js";
+import { clearLearnedStreamHosts } from "../streamAllowlist.js";
 
 interface PendingPin {
   id: number;
@@ -86,6 +87,7 @@ export async function settingsRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: (err as Error).message });
     }
     settingsStore.setSilo({ baseUrl: cleanBaseUrl, username, password });
+    clearLearnedStreamHosts();
     resetSiloSession();
     bustCache("ondemand:");
     bustCache("popular:");
@@ -95,6 +97,7 @@ export async function settingsRoutes(app: FastifyInstance) {
 
   app.delete("/api/settings/silo", async () => {
     settingsStore.clearSilo();
+    clearLearnedStreamHosts();
     resetSiloSession();
     bustCache("ondemand:");
     bustCache("popular:");
@@ -118,12 +121,14 @@ export async function settingsRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: (err as Error).message });
     }
     settingsStore.setXtream({ baseUrl: cleanBaseUrl, username, password });
+    clearLearnedStreamHosts();
     bustCache("live:");
     return { ok: true };
   });
 
   app.delete("/api/settings/xtream", async () => {
     settingsStore.clearXtream();
+    clearLearnedStreamHosts();
     bustCache("live:");
     return { ok: true };
   });
@@ -149,6 +154,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     try {
       const server = await resolveServerFromAuthToken(pin.authToken);
       settingsStore.setPlex(server);
+      clearLearnedStreamHosts();
       pendingPin = null;
       bustCache("ondemand:");
       bustCache("popular:");
@@ -161,6 +167,7 @@ export async function settingsRoutes(app: FastifyInstance) {
 
   app.delete("/api/settings/plex", async () => {
     settingsStore.clearPlex();
+    clearLearnedStreamHosts();
     bustCache("ondemand:");
     bustCache("popular:");
     bustCache("trakt:");
