@@ -3,13 +3,13 @@ import { cached } from "../cache.js";
 import { getMovieDetails, getTvDetails, searchTmdbId } from "../clients/tmdb.js";
 import { getPlexMediaVersions, PlexMediaVersion } from "../clients/plex.js";
 import { getSiloMediaVersions, SiloMediaVersion } from "../clients/silo.js";
+import { getVodInfo, parseXtreamPlaybackId, playbackModeForExtension } from "../clients/xtream.js";
 import { getRatingAndComments } from "../clients/trakt.js";
 import { searchOwnedLibrary } from "../library.js";
-import { matchKey } from "../merge.js";
-import { NotConfiguredError } from "../settingsStore.js";
+import { matchingTitles } from "../merge.js";
 
 export interface SourceVersion {
-  source: "plex" | "silo";
+  source: "plex" | "silo" | "xtream";
   id: string;
   serverName: string;
   filename?: string;
@@ -20,6 +20,7 @@ export interface SourceVersion {
   audioChannels?: number;
   container?: string;
   hdr?: string;
+  playback?: "hls" | "file";
   badges: string[];
 }
 
@@ -83,7 +84,7 @@ function buildBadges(opts: {
   audioChannels?: number;
   filename?: string;
   hdr?: string;
-  source: "plex" | "silo";
+  source: "plex" | "silo" | "xtream";
 }): string[] {
   const badges: string[] = [];
   const parsed = parseFilename(opts.filename);
@@ -145,6 +146,46 @@ function plexToSourceVersion(v: PlexMediaVersion): SourceVersion {
       audioChannels: v.audioChannels,
       filename: v.filename,
       source: "plex",
+    }),
+  };
+}
+
+async function xtreamToSourceVersion(playbackId: string, fallbackTitle: string): Promise<SourceVersion | null> {
+  const parsed = parseXtreamPlaybackId(playbackId);
+  if (!parsed || parsed.kind !== "vod") return null;
+
+  let name = fallbackTitle;
+  let extension = parsed.extension;
+  let resolution: string | undefined;
+  let videoCodec: string | undefined;
+  let audioCodec: string | undefined;
+  try {
+    const info = await getVodInfo(parsed.id);
+    if (info.name) name = info.name;
+    if (info.containerExtension) extension = info.containerExtension;
+    resolution = info.resolution;
+    videoCodec = info.videoCodec;
+    audioCodec = info.audioCodec;
+  } catch {
+    // The catalog id is enough to play; badges just stay sparse.
+  }
+
+  return {
+    source: "xtream",
+    id: `vod:${parsed.id}:${extension}`,
+    serverName: "Xtream",
+    filename: name,
+    resolution,
+    videoCodec,
+    audioCodec,
+    container: extension,
+    playback: playbackModeForExtension(extension),
+    badges: buildBadges({
+      resolution,
+      videoCodec,
+      audioCodec,
+      filename: name,
+      source: "xtream",
     }),
   };
 }
@@ -225,12 +266,12 @@ export async function detailsRoutes(app: FastifyInstance) {
   });
 
   app.get("/api/sources", async (request) => {
-    const { title, year } = request.query as { title?: string; year?: string };
+    const { title, year, type } = request.query as { title?: string; year?: string; type?: string };
     if (!title) return { versions: [] };
 
     const { merged } = await searchOwnedLibrary(title);
-    const targetKey = matchKey(title, year ? Number(year) : undefined);
-    const matches = merged.filter((item) => matchKey(item.title, item.year) === targetKey);
+    const kind = type === "movie" || type === "show" ? type : undefined;
+    const matches = matchingTitles(merged, title, year ? Number(year) : undefined, kind);
 
     const versions: SourceVersion[] = [];
 
@@ -243,6 +284,10 @@ export async function detailsRoutes(app: FastifyInstance) {
           } else if (src.source === "silo") {
             const siloVersions = await getSiloMediaVersions(src.id);
             versions.push(...siloVersions.map(siloToSourceVersion));
+          } else if (src.source === "xtream") {
+            // Series aren't a single file — episodes are loaded separately.
+            const version = await xtreamToSourceVersion(src.id, match.title);
+            if (version) versions.push(version);
           }
         } catch {
           // Source not reachable, skip

@@ -14,7 +14,15 @@ function formatSize(bytes?: number): string {
   return gb >= 1 ? `${gb.toFixed(2)} GB` : `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
 }
 
-type SourceFilter = "all" | "plex" | "silo";
+type SourceFilter = "all" | "plex" | "silo" | "xtream";
+
+function sourceLabel(source: string): string {
+  if (source === "all") return "All";
+  if (source === "plex") return "Plex";
+  if (source === "silo") return "Silo";
+  if (source === "xtream") return "Xtream";
+  return source;
+}
 
 export default function SourcePicker({ title, versions, onSelect, onClose }: SourcePickerProps) {
   const [filter, setFilter] = useState<SourceFilter>("all");
@@ -57,7 +65,7 @@ export default function SourcePicker({ title, versions, onSelect, onClose }: Sou
                 className={`chip ${filter === f ? "active" : ""}`}
                 onClick={() => setFilter(f)}
               >
-                {f === "all" ? "All" : f === "plex" ? "Plex" : "Silo"}
+                {sourceLabel(f)}
               </span>
             ))}
           </div>

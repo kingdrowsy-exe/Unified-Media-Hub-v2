@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { PopularItem, fetchPopular, fetchTraktRecommendations, fetchTraktWatchlist } from "../api.js";
 import MovieDetail from "../components/MovieDetail.js";
 import Hero, { HeroItem } from "../components/Hero.js";
+import LibraryBrowser from "../components/LibraryBrowser.js";
 import Shelf from "../components/Shelf.js";
 import Tile from "../components/Tile.js";
 
@@ -80,6 +81,8 @@ export default function OnDemand() {
   return (
     <div className="page">
       {heroItems.length > 0 && <Hero items={heroItems} />}
+
+      <LibraryBrowser onSelect={setSelectedItem} />
 
       {tmdbConfigured === false && (
         <div className="notice">

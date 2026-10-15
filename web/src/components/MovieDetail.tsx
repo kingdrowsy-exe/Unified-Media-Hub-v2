@@ -1,12 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import {
   fetchDetails,
+  fetchMatch,
+  fetchSeriesDetail,
   fetchSources,
   lookupTmdbId,
   PopularItem,
   MergedItem,
+  LibrarySource,
   TmdbDetails,
   SourceVersion,
+  XtreamEpisode,
+  XtreamSeriesDetail,
   streamUrlFor,
 } from "../api.js";
 import SourcePicker from "./SourcePicker.js";
@@ -41,13 +46,32 @@ function formatSize(bytes?: number): string {
   return gb >= 1 ? `${gb.toFixed(2)} GB` : `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
 }
 
+function formatEpisodeDuration(seconds?: number): string {
+  if (!seconds) return "";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.round((seconds % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function seriesIdFromSources(sources: { source: LibrarySource; id: string }[]): number | null {
+  for (const source of sources) {
+    if (source.source !== "xtream") continue;
+    const match = /^series:(\d+)$/.exec(source.id);
+    if (match) return Number(match[1]);
+  }
+  return null;
+}
+
 export default function MovieDetail({ item, onClose, onSelectSimilar }: MovieDetailProps) {
   const [details, setDetails] = useState<TmdbDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [showSourcePicker, setShowSourcePicker] = useState(false);
   const [sources, setSources] = useState<SourceVersion[] | null>(null);
   const [loadingSources, setLoadingSources] = useState(false);
-  const [playingSrc, setPlayingSrc] = useState<string | null>(null);
+  const [playing, setPlaying] = useState<{ src: string; hls: boolean; title?: string; duration?: number } | null>(null);
+  const [seriesDetail, setSeriesDetail] = useState<XtreamSeriesDetail | null>(null);
+  const [season, setSeason] = useState<number | null>(null);
   const [overviewExpanded, setOverviewExpanded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -58,7 +82,9 @@ export default function MovieDetail({ item, onClose, onSelectSimilar }: MovieDet
     setError(null);
     setSources(null);
     setShowSourcePicker(false);
-    setPlayingSrc(null);
+    setPlaying(null);
+    setSeriesDetail(null);
+    setSeason(null);
     setOverviewExpanded(false);
   }, [item.id]);
 
@@ -95,26 +121,78 @@ export default function MovieDetail({ item, onClose, onSelectSimilar }: MovieDet
     return () => {
       cancelled = true;
     };
-  }, [item.id]);
+  }, [item.id, item.title, item.type, item.year]);
+
+  useEffect(() => {
+    if (item.type !== "show" || seriesDetail) return;
+    let cancelled = false;
+    const title = details?.title || item.title;
+    const year = item.year ?? (details?.releaseDate ? Number(details.releaseDate.slice(0, 4)) : undefined);
+    const known = seriesIdFromSources(item.sources);
+    const resolveId = known
+      ? Promise.resolve(known)
+      : title
+        ? fetchMatch(title, year, "show").then((res) => seriesIdFromSources(res.sources))
+        : Promise.resolve(null);
+
+    resolveId
+      .then((seriesId) => {
+        if (cancelled || !seriesId) return;
+        return fetchSeriesDetail(seriesId).then((detail) => {
+          if (cancelled) return;
+          setSeriesDetail(detail);
+          setSeason(detail.seasons[0]?.number ?? detail.episodes[0]?.season ?? null);
+        });
+      })
+      .catch(() => {
+        // Episodes are optional; the title page still works from TMDB.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [item.id, item.title, item.type, item.year, item.sources, details?.title, details?.releaseDate, seriesDetail]);
+
+  function playEpisode(episode: XtreamEpisode, detailTitle?: string) {
+    setError(null);
+    setPlaying({
+      src: streamUrlFor("xtream", episode.id),
+      hls: episode.playback === "hls",
+      title: detailTitle ? `${detailTitle} · ${episode.title}` : episode.title,
+      duration: episode.durationSecs,
+    });
+  }
+
+  function playVersion(version: SourceVersion) {
+    setPlaying({
+      src: streamUrlFor(version.source, version.id),
+      hls: version.playback === "hls",
+    });
+  }
 
   async function handlePlay() {
     setLoadingSources(true);
     setSources(null);
+    setError(null);
     try {
-      const result = await fetchSources(item.title, item.year);
-      if (result.versions.length === 0) {
-        setError("This title isn't in your connected libraries.");
-        setLoadingSources(false);
-        return;
-      }
+      const title = details?.title || item.title;
+      const year = item.year ?? (details?.releaseDate ? Number(details.releaseDate.slice(0, 4)) : undefined);
+      const result = await fetchSources(title, year, item.type);
       if (result.versions.length === 1) {
-        const v = result.versions[0];
-        setPlayingSrc(streamUrlFor(v.source, v.id));
-        setLoadingSources(false);
+        playVersion(result.versions[0]);
         return;
       }
-      setSources(result.versions);
-      setShowSourcePicker(true);
+      if (result.versions.length > 1) {
+        setSources(result.versions);
+        setShowSourcePicker(true);
+        return;
+      }
+      const episodes = seriesDetail?.episodes ?? [];
+      const first = episodes.find((episode) => episode.season === season) ?? episodes[0];
+      if (first) {
+        playEpisode(first, seriesDetail?.title || item.title);
+        return;
+      }
+      setError("This title isn't in your connected libraries.");
     } catch {
       setError("Couldn't check your libraries.");
     } finally {
@@ -124,7 +202,7 @@ export default function MovieDetail({ item, onClose, onSelectSimilar }: MovieDet
 
   function handleSourceSelect(version: SourceVersion) {
     setShowSourcePicker(false);
-    setPlayingSrc(streamUrlFor(version.source, version.id));
+    playVersion(version);
   }
 
   const backdrop = details?.backdrop ?? ("backdrop" in item ? (item as PopularItem).backdrop : undefined) ?? item.poster;
@@ -133,7 +211,8 @@ export default function MovieDetail({ item, onClose, onSelectSimilar }: MovieDet
   const runtime = formatRuntime(details?.runtime);
   const genreStr = details?.genres?.join(", ") ?? item.genre ?? "";
   const rating = details?.voteAverage ?? (item.ratingPercent ? item.ratingPercent / 10 : 0);
-  const overview = details?.overview ?? "";
+  const overview = details?.overview || seriesDetail?.plot || "";
+  const visibleEpisodes = (seriesDetail?.episodes ?? []).filter((episode) => season === null || episode.season === season);
 
   const metaParts = [year, runtime, genreStr].filter(Boolean);
 
@@ -210,6 +289,47 @@ export default function MovieDetail({ item, onClose, onSelectSimilar }: MovieDet
               {loadingSources ? "Checking…" : "▶ Play"}
             </button>
           </div>
+
+          {seriesDetail && seriesDetail.episodes.length > 0 && (
+            <div className="detail-section">
+              <h2 className="detail-section-title">
+                Episodes <span className="detail-section-source">from Xtream</span>
+              </h2>
+              {seriesDetail.seasons.length > 1 && (
+                <div className="season-row">
+                  {seriesDetail.seasons.map((entry) => (
+                    <span
+                      key={entry.number}
+                      className={`chip ${season === entry.number ? "active" : ""}`}
+                      onClick={() => setSeason(entry.number)}
+                    >
+                      {entry.name}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div className="episode-list">
+                {visibleEpisodes.map((episode) => (
+                  <button
+                    key={episode.id}
+                    className="episode-row"
+                    onClick={() => playEpisode(episode, displayTitle)}
+                  >
+                    <span className="episode-num">
+                      {episode.episode > 0 ? episode.episode : "•"}
+                    </span>
+                    <span className="episode-copy">
+                      <span className="episode-title">{episode.title}</span>
+                      {episode.plot && <span className="episode-plot">{episode.plot}</span>}
+                    </span>
+                    {episode.durationSecs ? (
+                      <span className="episode-duration">{formatEpisodeDuration(episode.durationSecs)}</span>
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Cast */}
           {details?.cast && details.cast.length > 0 && (
@@ -289,13 +409,14 @@ export default function MovieDetail({ item, onClose, onSelectSimilar }: MovieDet
       )}
 
       {/* Video player */}
-      {playingSrc && (
+      {playing && (
         <Player
-          src={playingSrc}
-          title={displayTitle}
+          src={playing.src}
+          title={playing.title ?? displayTitle}
           subtitle={metaParts.join(" · ") || undefined}
-          durationHint={details?.runtime ? details.runtime * 60 : undefined}
-          onClose={() => setPlayingSrc(null)}
+          isHls={playing.hls}
+          durationHint={playing.duration ?? (details?.runtime ? details.runtime * 60 : undefined)}
+          onClose={() => setPlaying(null)}
         />
       )}
 
