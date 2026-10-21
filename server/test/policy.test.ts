@@ -17,6 +17,27 @@ const { sanitizeArtworkUrl } = await import("../src/artwork.js");
 const { settingsStore } = await import("../src/settingsStore.js");
 const { buildPlexPartUrl, plexPosterUrl } = await import("../src/clients/plex.js");
 
+test("a playlist ticket that is still reloaded survives the cap", () => {
+  clearLearnedStreamHosts();
+  assert.equal(rememberStreamUrl("http://cdn.example/live.m3u8"), true);
+
+  const stale = issueStreamTicket("http://cdn.example/stale.m3u8");
+  assert.ok(stale);
+  for (let i = 0; i < 4096; i++) {
+    assert.ok(issueStreamTicket(`http://cdn.example/a-${i}.ts`));
+  }
+  assert.equal(resolveStreamTicket(stale), null);
+
+  const live = issueStreamTicket("http://cdn.example/live.m3u8");
+  assert.equal(resolveStreamTicket(live), "http://cdn.example/live.m3u8");
+  for (let i = 0; i < 4096; i++) {
+    assert.ok(issueStreamTicket(`http://cdn.example/b-${i}.ts`));
+    assert.equal(resolveStreamTicket(live), "http://cdn.example/live.m3u8");
+  }
+  assert.equal(resolveStreamTicket(live), "http://cdn.example/live.m3u8");
+  clearLearnedStreamHosts();
+});
+
 test("stream policy blocks relays, caps learned hosts, and keeps external links on known sites", () => {
   clearLearnedStreamHosts();
   assert.equal(addressKind("10.1.2.3"), "private");
