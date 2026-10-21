@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import { RefObject, useEffect, useState } from "react";
 import Hls from "hls.js";
 
@@ -29,7 +30,22 @@ export function useHlsVideo(
     video.addEventListener("error", onVideoError);
 
     if (isHls && Hls.isSupported()) {
-      hls = new Hls();
+      // Live IPTV only. Sit a few segments behind the edge and do not chase it:
+      // the default "edge" sync seeks currentTime back ~3 segment durations whenever
+      // a playlist refresh finds the playhead outside the sliding window while buffering.
+      // liveMaxLatencyDurationCount stays at the hls.js default (Infinity) so a finite
+      // max latency does not turn that catch-up seek back on.
+      hls = new Hls({
+        debug: import.meta.env.DEV,
+        lowLatencyMode: false,
+        liveSyncMode: "buffered",
+        liveDurationInfinity: true,
+        maxLiveSyncPlaybackRate: 1,
+        liveSyncDurationCount: 3,
+        maxBufferHole: 0.5,
+        backBufferLength: 60,
+        maxBufferSize: 120 * 1000 * 1000,
+      });
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (!data.fatal) return;
         switch (data.type) {
