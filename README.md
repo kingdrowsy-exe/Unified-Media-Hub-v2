@@ -1,6 +1,7 @@
 # Unified Media Hub (Windows App)
 
-An installable Windows desktop build of [Unified Media Hub](https://github.com/kingdrowsy-exe/Unified-Media-Player) —
+An installable Windows desktop build of [Unified Media Hub](https://github.com/kingdrowsy-exe/Unified-Media-Player),
+licensed under the MIT License (see `LICENSE` and `NOTICE`) —
 the same Plex + Silo + Xtream Codes aggregator, packaged as a real `.exe` installer via
 Electron instead of something you run from a terminal.
 
@@ -8,10 +9,18 @@ Unlike the web-app version, this bundles Node.js itself, so people installing it
 need Node installed first. It shows up in the Start Menu and Add/Remove Programs like any
 other app, and runs in its own window instead of a browser tab.
 
-Everyone who installs it uses their **own** Plex/Silo/Xtream/TMDB/Trakt accounts — nothing
-is shared between installs, and credentials are stored locally on each person's own machine
-(in Electron's per-user app-data folder), never anywhere else. No key or credential of any
-kind is bundled into this app or this repo.
+Everyone who installs it uses their **own** Plex/Silo/Xtream/TMDB/Trakt accounts. Nothing
+is shared between installs, and no key or credential is bundled into this app or this repo.
+You need the rights to every account and stream you connect. Do not paste passwords,
+tokens, or `settings.json` into GitHub issues.
+
+Credentials are stored only on that person's machine, in Electron's per-user app data:
+
+`%APPDATA%\Unified Media Hub\data\settings.json`
+
+The desktop app encrypts that file with [Electron `safeStorage`](https://www.electronjs.org/docs/latest/api/safe-storage)
+(DPAPI on Windows). A crash from a bad provider response is appended to `crash.log` in
+the same folder. The embedded API listens on `127.0.0.1` only.
 
 ## Download
 
@@ -36,22 +45,58 @@ The app opens on **Settings**. Log in with your own:
 
 ## Building the installer
 
+Requires **Node.js 20 or newer**, on **Windows**. `npm run dist` builds an NSIS installer;
+it is not a reliable cross-compile from macOS or Linux.
+
 ```bash
 npm run install:all
 npm run dist
 ```
 
+`install:all` installs the root app (Electron), the API server, and the web UI.
 `dist` builds the server + web app, then packages everything into a Windows installer
 under `release/`. The installer is fairly large (~100-150MB) because it bundles a full
 Chromium + Node runtime (that's what lets people run it without installing Node.js
 themselves).
 
+The root `package.json` dependencies are what the installer ships. Keep them on the
+same versions as `server/package.json`. `server/` and `web/` are still separate from
+the original web-app repo; this tree does not try to merge those codebases.
+
+### Code signing
+
+The Windows build is set up to sign when a certificate is present. It does not ship
+with one, and unsigned builds will show a SmartScreen warning. There is no auto-update.
+
+1. Buy an Authenticode code-signing certificate and export it as a `.pfx`.
+2. From a Windows shell, with the repo installed:
+
+```bash
+set WIN_CSC_LINK=C:\path\to\certificate.pfx
+set WIN_CSC_KEY_PASSWORD=your-pfx-password
+npm run dist
+```
+
+`WIN_CSC_LINK` may also be a `file://` URL or a base64-encoded pfx. Electron Builder
+signs with SHA-256. To produce an unsigned installer on purpose (local testing only):
+
+```bash
+set CSC_IDENTITY_AUTO_DISCOVERY=false
+npm run dist
+```
+
+Do not turn on auto-update until the installer is signed.
+
 ## Running it locally without building an installer
 
 ```bash
 npm run install:all
+npm test
 npm start
 ```
+
+`npm test` runs the API tests (loopback access, the HLS allowlist, credential redaction,
+and Plex proxying).
 
 Builds the server + web app and launches them in an Electron window directly.
 

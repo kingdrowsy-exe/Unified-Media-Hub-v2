@@ -3,7 +3,14 @@ import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
+import { recordCrash } from "./crashLog.js";
 import { config } from "./config.js";
+import { isAppOrigin, isLoopbackHostHeader } from "./localAccess.js";
+import { redactText, redactUrl } from "./redact.js";
+import { installUpstreamGuards } from "./upstream.js";
+import "./streamTickets.js";
+
+installUpstreamGuards();
 import { NotConfiguredError } from "./settingsStore.js";
 import { onDemandRoutes } from "./routes/ondemand.js";
 import { liveRoutes } from "./routes/live.js";
@@ -15,23 +22,75 @@ import { traktRoutes } from "./routes/trakt.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// A malformed/truncated HTTP response from a flaky upstream provider (Xtream, Plex, etc.)
-// can trip an internal assertion in Node's HTTP client (undici) that throws outside of any
-// request's own promise chain - Fastify's per-request error handling can't catch that, and
-// left unhandled it takes the whole process down over one bad response from one provider.
-// Log it and keep serving instead - especially important here since a packaged desktop app
-// has no one watching a terminal to notice and restart it.
+// Socket failures that undici cannot attach to a request are handled on the
+// dispatcher (see upstream.ts). Anything that still escapes is process-wide.
+function fatal(kind: string, err: unknown): void {
+  recordCrash(kind, err);
+  process.exit(1);
+}
 process.on("uncaughtException", (err) => {
-  console.error("Uncaught exception (server staying up):", err);
+  fatal("uncaughtException", err);
 });
 process.on("unhandledRejection", (reason) => {
-  console.error("Unhandled rejection (server staying up):", reason);
+  fatal("unhandledRejection", reason);
 });
 
 export async function startServer() {
-  const app = Fastify({ logger: true });
+  const app = Fastify({
+    logger:
+      process.env.LOG_LEVEL === "silent"
+        ? false
+        : {
+            level: process.env.LOG_LEVEL ?? "info",
+            serializers: {
+              req(request) {
+                return { method: request.method, url: redactUrl(request.url) };
+              },
+              err(error) {
+                const err = error as Error;
+                return {
+                  type: err.name,
+                  message: redactText(err.message),
+                  stack: redactText(err.stack ?? ""),
+                };
+              },
+            },
+          },
+  });
 
-  await app.register(cors, { origin: true });
+  // Websites and other LAN devices must not be able to call this API. The
+  // socket is loopback-only (see listen below). Browsers omit Origin on
+  // no-cors GETs such as <img>, so Origin alone does not stop those. They do
+  // send Sec-Fetch-Site: cross-site, which a page on this origin never does.
+  app.addHook("onRequest", (request, reply, done) => {
+    const host = request.headers.host;
+    if (Array.isArray(host) || !isLoopbackHostHeader(host)) {
+      reply.code(403).send({ error: "forbidden" });
+      return;
+    }
+    const origin = request.headers.origin;
+    if (Array.isArray(origin) || (origin !== undefined && !isAppOrigin(origin))) {
+      reply.code(403).send({ error: "forbidden_origin" });
+      return;
+    }
+    const site = request.headers["sec-fetch-site"];
+    const sites = Array.isArray(site) ? site : site ? [site] : [];
+    if (sites.some((value) => value === "cross-site" || value === "same-site")) {
+      reply.code(403).send({ error: "forbidden" });
+      return;
+    }
+    done();
+  });
+
+  await app.register(cors, {
+    origin(origin, callback) {
+      if (!origin || isAppOrigin(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(null, false);
+    },
+  });
 
   app.setErrorHandler((err: Error, request, reply) => {
     if (err instanceof NotConfiguredError) {
@@ -39,7 +98,7 @@ export async function startServer() {
       return;
     }
     request.log.error(err);
-    reply.code(500).send({ error: "internal_error", message: err.message });
+    reply.code(500).send({ error: "internal_error" });
   });
 
   await app.register(settingsRoutes);
@@ -51,7 +110,7 @@ export async function startServer() {
   await app.register(traktRoutes);
 
   const webDist = path.join(__dirname, "../../web/dist");
-  await app.register(fastifyStatic, { root: webDist, wildcard: false });
+  await app.register(fastifyStatic, { root: webDist, wildcard: false, list: false });
   app.setNotFoundHandler((request, reply) => {
     if (request.raw.url?.startsWith("/api")) {
       reply.code(404).send({ error: "Not found" });
@@ -60,7 +119,10 @@ export async function startServer() {
     reply.sendFile("index.html");
   });
 
-  await app.listen({ port: config.port, host: "0.0.0.0" });
+  // 127.0.0.1, not 0.0.0.0: nothing else on the LAN can open a connection.
+  // Electron loads http://127.0.0.1 explicitly so this still works where
+  // "localhost" resolves to ::1 first.
+  await app.listen({ port: config.port, host: "127.0.0.1" });
   return app;
 }
 

@@ -68,18 +68,33 @@ a {
   background: linear-gradient(to bottom, rgba(0, 0, 0, 0.85) 0%, rgba(0, 0, 0, 0) 100%);
 }
 
-.nav-brand {
+.nav-side {
   position: absolute;
   left: 4vw;
   top: 50%;
   transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.nav-brand {
   display: flex;
   align-items: center;
   transition: transform 0.2s ease;
 }
 
 .nav-brand:hover {
-  transform: translateY(-50%) scale(1.06);
+  transform: scale(1.06);
+}
+
+.nav-version {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  line-height: 1;
 }
 
 .nav-brand img {
@@ -154,16 +169,18 @@ a {
     padding: 12px 8px;
   }
 
-  .nav-brand,
+  .nav-side {
+    left: 8px;
+  }
+
   .nav-settings {
-    left: 4px;
+    right: 4px;
     width: 30px;
     height: 30px;
   }
 
-  .nav-settings {
-    left: auto;
-    right: 4px;
+  .nav-version {
+    font-size: 9px;
   }
 
   .nav-brand img {
@@ -208,6 +225,20 @@ a {
   padding: 10px 16px;
   font-size: 13px;
   color: var(--text-muted);
+}
+
+.settings-version {
+  margin: 8px 0 24px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.settings-insecure {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  color: var(--text-muted);
+  font-size: 13px;
 }
 
 .notice a {
@@ -577,6 +608,29 @@ a {
 }
 
 /* ---------- Tiles ---------- */
+
+button.tile,
+button.guide-row,
+button.live-category {
+  font: inherit;
+  background: none;
+  border: none;
+  text-align: inherit;
+}
+
+button.tile,
+button.guide-row {
+  color: inherit;
+}
+
+button.live-category {
+  color: var(--text-muted);
+}
+
+button.guide-row,
+button.live-category {
+  width: 100%;
+}
 
 .tile {
   flex: 0 0 auto;

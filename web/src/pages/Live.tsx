@@ -34,7 +34,7 @@ function GuideRow({
   active: boolean;
   onClick: () => void;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
+  const ref = useRef<HTMLButtonElement>(null);
   const inView = useInView(ref);
   const [epg, setEpg] = useState<EpgListing[]>(() => epgCache.get(channel.id) ?? []);
 
@@ -59,7 +59,7 @@ function GuideRow({
   const quality = qualityFromName(channel.name);
 
   return (
-    <div ref={ref} className={`guide-row ${active ? "active" : ""}`} onClick={onClick} tabIndex={0}>
+    <button type="button" ref={ref} className={`guide-row ${active ? "active" : ""}`} onClick={onClick}>
       <div className="guide-row-logo">
         {channel.icon ? <img src={channel.icon} alt="" loading="lazy" /> : <div className="guide-row-logo-empty" />}
       </div>
@@ -83,7 +83,7 @@ function GuideRow({
           )}
         </div>
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -197,27 +197,29 @@ export default function Live() {
           Categories
           <span className="live-sidebar-count">{channels.length}</span>
         </div>
-        <div
+        <button
+          type="button"
           className={`live-category ${filter.kind === "all" ? "active" : ""}`}
           onClick={() => setFilter({ kind: "all" })}
         >
           <span>All</span>
           <span className="live-category-count">{channels.length}</span>
-        </div>
+        </button>
 
         {groups.map((g) => {
           if (g.categories.length === 1) {
             const only = g.categories[0];
             const key: Filter = { kind: "category", category: only.name };
             return (
-              <div
+              <button
+                type="button"
                 key={g.group}
                 className={`live-category ${filterKey(filter) === filterKey(key) ? "active" : ""}`}
                 onClick={() => setFilter(key)}
               >
                 <span>{only.name}</span>
                 <span className="live-category-count">{categoryCounts.get(only.name) ?? 0}</span>
-              </div>
+              </button>
             );
           }
 
@@ -225,7 +227,8 @@ export default function Live() {
           const groupKey: Filter = { kind: "group", group: g.group };
           return (
             <div key={g.group} className="live-category-group">
-              <div
+              <button
+                type="button"
                 className={`live-category live-category-folder ${
                   filterKey(filter) === filterKey(groupKey) ? "active" : ""
                 }`}
@@ -247,20 +250,21 @@ export default function Live() {
                   <span>{g.group}</span>
                 </span>
                 <span className="live-category-count">{groupCounts.get(g.group) ?? 0}</span>
-              </div>
+              </button>
               {expanded && (
                 <div className="live-category-children">
                   {g.categories.map((c) => {
                     const key: Filter = { kind: "category", category: c.name };
                     return (
-                      <div
+                      <button
+                        type="button"
                         key={c.name}
                         className={`live-category sub ${filterKey(filter) === filterKey(key) ? "active" : ""}`}
                         onClick={() => setFilter(key)}
                       >
                         <span>{c.label}</span>
                         <span className="live-category-count">{categoryCounts.get(c.name) ?? 0}</span>
-                      </div>
+                      </button>
                     );
                   })}
                 </div>

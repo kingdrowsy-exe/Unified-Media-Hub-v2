@@ -5,6 +5,7 @@ export function useHlsVideo(
   videoRef: RefObject<HTMLVideoElement | null>,
   src: string | undefined,
   isHls: boolean,
+  live = false,
 ) {
   const [error, setError] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -29,7 +30,23 @@ export function useHlsVideo(
     video.addEventListener("error", onVideoError);
 
     if (isHls && Hls.isSupported()) {
-      hls = new Hls();
+      // Live sync defaults snap a stalled playhead back to the edge and then
+      // chase forward again (the 12-15s jump on sports). VOD playback is unchanged.
+      hls = new Hls(
+        live
+          ? {
+              lowLatencyMode: false,
+              liveSyncMode: "buffered",
+              liveDurationInfinity: true,
+              maxLiveSyncPlaybackRate: 1,
+              liveSyncDurationCount: 3,
+              maxBufferHole: 0.5,
+              backBufferLength: 60,
+              maxBufferSize: 120 * 1000 * 1000,
+              debug: import.meta.env.DEV,
+            }
+          : undefined,
+      );
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (!data.fatal) return;
         switch (data.type) {
@@ -70,7 +87,7 @@ export function useHlsVideo(
       video.removeEventListener("error", onVideoError);
       hls?.destroy();
     };
-  }, [videoRef, src, isHls]);
+  }, [videoRef, src, isHls, live]);
 
   return { error, playing };
 }

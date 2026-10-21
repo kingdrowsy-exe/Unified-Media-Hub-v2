@@ -1,4 +1,5 @@
 import { NotConfiguredError, settingsStore } from "../settingsStore.js";
+import { fetchProvider, readJsonLimited } from "../upstream.js";
 
 export interface PlexItem {
   ratingKey: string;
@@ -25,15 +26,34 @@ function requirePlex() {
   return plex;
 }
 
-async function plexFetch<T>(path: string): Promise<T> {
+function plexUrl(path: string): URL {
   const plex = requirePlex();
-  const url = new URL(plex.baseUrl + path);
-  url.searchParams.set("X-Plex-Token", plex.token);
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
-  if (!res.ok) {
-    throw new Error(`Plex request failed: ${res.status} ${path}`);
+  const base = new URL(plex.baseUrl);
+  const url = new URL(path, base);
+  if (url.origin !== base.origin || url.username || url.password) {
+    throw new Error("Plex request left the configured server");
   }
-  return (await res.json()) as T;
+  url.searchParams.set("X-Plex-Token", plex.token);
+  return url;
+}
+
+async function plexFetch<T>(path: string): Promise<T> {
+  const res = await fetchProvider(plexUrl(path), { headers: { Accept: "application/json" } });
+  if (!res.ok) {
+    throw new Error(`Plex request failed: ${res.status}`);
+  }
+  return readJsonLimited<T>(res);
+}
+
+/** Part keys from a Plex server stay on that server. A key of "@evil" or "//evil" must not carry the token away. */
+export function buildPlexPartUrl(baseUrl: string, token: string, partKey: string): string {
+  const base = new URL(baseUrl);
+  const target = new URL(partKey, base);
+  if (target.origin !== base.origin || target.username || target.password) {
+    throw new Error("Plex returned a stream outside the configured server");
+  }
+  target.searchParams.set("X-Plex-Token", token);
+  return target.toString();
 }
 
 export async function listSections(): Promise<PlexDirectory[]> {
@@ -89,9 +109,21 @@ export function plexPosterUrl(thumb?: string): string | undefined {
   if (!thumb) return undefined;
   const plex = settingsStore.getPlex();
   if (!plex) return undefined;
-  const url = new URL(plex.baseUrl + thumb);
-  url.searchParams.set("X-Plex-Token", plex.token);
-  return url.toString();
+  let target: URL;
+  try {
+    const base = new URL(plex.baseUrl);
+    target = new URL(thumb, base);
+    if (target.origin !== base.origin || target.username || target.password) return undefined;
+  } catch {
+    return undefined;
+  }
+  target.searchParams.delete("X-Plex-Token");
+  const path = `${target.pathname}${target.search}`;
+  return `/api/image/plex?path=${encodeURIComponent(path)}`;
+}
+
+export function plexImageUrl(imagePath: string): string {
+  return plexUrl(imagePath).toString();
 }
 
 export interface PlexMediaVersion {
@@ -146,7 +178,5 @@ export async function resolvePlexStreamUrl(ratingKey: string): Promise<string> {
   if (!part) {
     throw new Error(`No playable part found for Plex item ${ratingKey}`);
   }
-  const url = new URL(plex.baseUrl + part.key);
-  url.searchParams.set("X-Plex-Token", plex.token);
-  return url.toString();
+  return buildPlexPartUrl(plex.baseUrl, plex.token, part.key);
 }

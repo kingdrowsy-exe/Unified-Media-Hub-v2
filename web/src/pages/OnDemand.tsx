@@ -25,21 +25,33 @@ export default function OnDemand() {
   const [watchlist, setWatchlist] = useState<PopularItem[]>([]);
   const [recommendations, setRecommendations] = useState<PopularItem[]>([]);
   const [selectedItem, setSelectedItem] = useState<PopularItem | null>(null);
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    fetchPopular()
-      .then((res) => {
+    let cancelled = false;
+    Promise.allSettled([
+      fetchPopular().then((res) => {
+        if (cancelled) return;
         setPopularMovies(res.movies);
         setPopularShows(res.shows);
         setTmdbConfigured(res.configured);
-      })
-      .catch(() => setTmdbConfigured(false));
-    fetchTraktWatchlist()
-      .then((res) => setWatchlist(res.items))
-      .catch(() => setWatchlist([]));
-    fetchTraktRecommendations()
-      .then((res) => setRecommendations(res.items))
-      .catch(() => setRecommendations([]));
+      }),
+      fetchTraktWatchlist().then((res) => {
+        if (!cancelled) setWatchlist(res.items);
+      }),
+      fetchTraktRecommendations().then((res) => {
+        if (!cancelled) setRecommendations(res.items);
+      }),
+    ]).then((results) => {
+      if (cancelled) return;
+      if (results[0].status === "rejected") setTmdbConfigured(false);
+      if (results[1].status === "rejected") setWatchlist([]);
+      if (results[2].status === "rejected") setRecommendations([]);
+      setReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   function handleSelectSimilar(tmdbId: number, type: "movie" | "show") {
@@ -77,9 +89,25 @@ export default function OnDemand() {
     );
   }
 
+  const shelvesEmpty =
+    watchlist.length === 0 &&
+    recommendations.length === 0 &&
+    popularMovies.length === 0 &&
+    popularShows.length === 0;
+
   return (
     <div className="page">
+      {!ready && <div className="status">Loading your library…</div>}
+
       {heroItems.length > 0 && <Hero items={heroItems} />}
+
+      {ready && shelvesEmpty && (
+        <div className="status">
+          Nothing to show yet.
+          <br />
+          <Link to="/settings">Open Settings</Link> to connect a source.
+        </div>
+      )}
 
       {tmdbConfigured === false && (
         <div className="notice">

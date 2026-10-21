@@ -17,6 +17,7 @@ import {
   startTraktLink,
   testConnection,
 } from "../api.js";
+import { APP_VERSION } from "../appVersion.js";
 
 type PlexLinkState =
   | { phase: "idle" }
@@ -43,8 +44,10 @@ function CredentialForm({
   const [baseUrl, setBaseUrl] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [allowInsecure, setAllowInsecure] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const insecure = baseUrl.trim().toLowerCase().startsWith("http://");
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -68,7 +71,10 @@ function CredentialForm({
           type="text"
           placeholder="https://your-server.example.com"
           value={baseUrl}
-          onChange={(e) => setBaseUrl(e.target.value)}
+          onChange={(e) => {
+            setBaseUrl(e.target.value);
+            if (!e.target.value.trim().toLowerCase().startsWith("http://")) setAllowInsecure(false);
+          }}
           required
         />
       </label>
@@ -85,8 +91,19 @@ function CredentialForm({
           required
         />
       </label>
+      {insecure && (
+        <label className="settings-insecure">
+          <input
+            type="checkbox"
+            checked={allowInsecure}
+            onChange={(e) => setAllowInsecure(e.target.checked)}
+            required
+          />
+          This server is plain HTTP. The password is sent in clear text. Continue only on a network you trust.
+        </label>
+      )}
       {error && <div className="settings-error">{error}</div>}
-      <button type="submit" disabled={saving}>
+      <button type="submit" disabled={saving || (insecure && !allowInsecure)}>
         {saving ? "Connecting…" : `Log in to ${title}`}
       </button>
     </form>
@@ -297,8 +314,15 @@ export default function Settings() {
     return <div className="page status">Loading settings…</div>;
   }
 
+  const needsSource = !status.plex && !status.silo && !status.xtream;
+
   return (
     <div className="page settings-page">
+      {needsSource && (
+        <div className="notice">
+          Start by connecting one source: Plex, Silo, or Xtream Codes. TMDB and Trakt are optional.
+        </div>
+      )}
       <section className="settings-card settings-card-plex">
         <div className="settings-card-header">
           <h2>Plex</h2>
@@ -491,6 +515,7 @@ export default function Settings() {
         )}
         {traktLink.phase === "error" && <div className="settings-error">{traktLink.message}</div>}
       </section>
+      <p className="settings-version">Unified Media Hub {APP_VERSION}</p>
     </div>
   );
 }

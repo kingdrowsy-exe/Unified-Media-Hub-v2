@@ -10,6 +10,9 @@ import {
 } from "../clients/trakt.js";
 import { bustCache } from "../cache.js";
 import { listSections } from "../clients/plex.js";
+import { clearLearnedStreamHosts } from "../streamAllowlist.js";
+import { safeExternalUrl } from "../externalUrls.js";
+import { fetchProvider, readJsonLimited } from "../upstream.js";
 
 interface PendingPin {
   id: number;
@@ -25,8 +28,24 @@ interface PendingTraktDevice {
 
 let pendingTraktDevice: PendingTraktDevice | null = null;
 
+function normalizeBaseUrl(baseUrl: string): string {
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    throw new Error("Server URL is not valid.");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("Server URL must start with http:// or https://.");
+  }
+  if (url.username || url.password) {
+    throw new Error("Put the username and password in their own fields, not in the server URL.");
+  }
+  return baseUrl.replace(/\/+$/, "");
+}
+
 async function validateSilo(baseUrl: string, username: string, password: string) {
-  const res = await fetch(`${baseUrl.replace(/\/+$/, "")}/api/v1/auth/login`, {
+  const res = await fetchProvider(`${baseUrl.replace(/\/+$/, "")}/api/v1/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password }),
@@ -35,7 +54,7 @@ async function validateSilo(baseUrl: string, username: string, password: string)
   if (!res.ok || !contentType.includes("application/json")) {
     throw new Error(`Silo login failed (${res.status}). Check the server URL and credentials.`);
   }
-  const data = (await res.json()) as { access_token?: string };
+  const data = await readJsonLimited<{ access_token?: string }>(res);
   if (!data.access_token) {
     throw new Error("Silo login failed. The server responded but did not return an access token.");
   }
@@ -45,21 +64,21 @@ async function validateXtream(baseUrl: string, username: string, password: strin
   const url = new URL(`${baseUrl.replace(/\/+$/, "")}/player_api.php`);
   url.searchParams.set("username", username);
   url.searchParams.set("password", password);
-  const res = await fetch(url);
+  const res = await fetchProvider(url);
   if (!res.ok) {
     throw new Error(`Xtream login failed (${res.status}). Check the server URL and credentials.`);
   }
-  const data = (await res.json()) as { user_info?: { auth?: number } };
+  const data = await readJsonLimited<{ user_info?: { auth?: number } }>(res);
   if (data.user_info && data.user_info.auth !== 1) {
     throw new Error("Xtream login failed. Check your username and password.");
   }
 }
 
 async function validateTmdb(accessToken: string) {
-  const res = await fetch("https://api.themoviedb.org/3/authentication", {
+  const res = await fetchProvider("https://api.themoviedb.org/3/authentication", {
     headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
   });
-  const data = (await res.json().catch(() => ({}))) as { success?: boolean };
+  const data = await readJsonLimited<{ success?: boolean }>(res).catch(() => ({}) as { success?: boolean });
   if (!res.ok || !data.success) {
     throw new Error("TMDB login failed. Check your API Read Access Token.");
   }
@@ -79,13 +98,15 @@ export async function settingsRoutes(app: FastifyInstance) {
     if (!baseUrl || !username || !password) {
       return reply.code(400).send({ error: "baseUrl, username, and password are required" });
     }
-    const cleanBaseUrl = baseUrl.replace(/\/+$/, "");
+    let cleanBaseUrl: string;
     try {
+      cleanBaseUrl = normalizeBaseUrl(baseUrl);
       await validateSilo(cleanBaseUrl, username, password);
     } catch (err) {
       return reply.code(400).send({ error: (err as Error).message });
     }
     settingsStore.setSilo({ baseUrl: cleanBaseUrl, username, password });
+    clearLearnedStreamHosts();
     resetSiloSession();
     bustCache("ondemand:");
     bustCache("popular:");
@@ -95,6 +116,7 @@ export async function settingsRoutes(app: FastifyInstance) {
 
   app.delete("/api/settings/silo", async () => {
     settingsStore.clearSilo();
+    clearLearnedStreamHosts();
     resetSiloSession();
     bustCache("ondemand:");
     bustCache("popular:");
@@ -111,19 +133,22 @@ export async function settingsRoutes(app: FastifyInstance) {
     if (!baseUrl || !username || !password) {
       return reply.code(400).send({ error: "baseUrl, username, and password are required" });
     }
-    const cleanBaseUrl = baseUrl.replace(/\/+$/, "");
+    let cleanBaseUrl: string;
     try {
+      cleanBaseUrl = normalizeBaseUrl(baseUrl);
       await validateXtream(cleanBaseUrl, username, password);
     } catch (err) {
       return reply.code(400).send({ error: (err as Error).message });
     }
     settingsStore.setXtream({ baseUrl: cleanBaseUrl, username, password });
+    clearLearnedStreamHosts();
     bustCache("live:");
     return { ok: true };
   });
 
   app.delete("/api/settings/xtream", async () => {
     settingsStore.clearXtream();
+    clearLearnedStreamHosts();
     bustCache("live:");
     return { ok: true };
   });
@@ -149,6 +174,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     try {
       const server = await resolveServerFromAuthToken(pin.authToken);
       settingsStore.setPlex(server);
+      clearLearnedStreamHosts();
       pendingPin = null;
       bustCache("ondemand:");
       bustCache("popular:");
@@ -161,6 +187,7 @@ export async function settingsRoutes(app: FastifyInstance) {
 
   app.delete("/api/settings/plex", async () => {
     settingsStore.clearPlex();
+    clearLearnedStreamHosts();
     bustCache("ondemand:");
     bustCache("popular:");
     bustCache("trakt:");
@@ -223,7 +250,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     pendingTraktDevice = { deviceCode: device.deviceCode, createdAt: Date.now() };
     return {
       userCode: device.userCode,
-      verificationUrl: device.verificationUrl,
+      verificationUrl: safeExternalUrl(device.verificationUrl, "https://trakt.tv/activate"),
       interval: device.interval,
       expiresIn: device.expiresIn,
     };

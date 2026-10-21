@@ -1,12 +1,13 @@
 {
   "name": "unified-media-hub-app",
   "private": true,
-  "version": "0.1.2",
+  "version": "2.0.0",
   "description": "Installable Windows desktop app wrapping Unified Media Hub",
   "type": "module",
   "main": "electron/main.js",
   "scripts": {
-    "install:all": "npm install --prefix server && npm install --prefix web",
+    "install:all": "npm install && npm install --prefix server && npm install --prefix web",
+    "test": "npm test --prefix server",
     "build:server": "npm run build --prefix server",
     "build:web": "npm run build --prefix web",
     "build": "npm run build:server && npm run build:web",
@@ -14,15 +15,15 @@
     "dist": "npm run build && electron-builder"
   },
   "dependencies": {
-    "@fastify/cors": "^10.0.1",
-    "@fastify/static": "^8.0.1",
+    "@fastify/cors": "^10.1.0",
+    "@fastify/static": "^10.1.6",
     "dotenv": "^16.4.5",
-    "fastify": "^5.1.0",
+    "fastify": "^5.12.7",
     "undici": "^6.20.1"
   },
   "devDependencies": {
-    "electron": "^33.2.0",
-    "electron-builder": "^25.1.8"
+    "electron": "^44.9.2",
+    "electron-builder": "^26.15.3"
   },
   "build": {
     "appId": "com.kingdrowsy.unifiedmediahub",
@@ -37,9 +38,12 @@
       "web/dist/**/*"
     ],
     "icon": "build/icon.ico",
+    "publish": null,
     "win": {
       "target": "nsis",
-      "signAndEditExecutable": false
+      "signtoolOptions": {
+        "signingHashAlgorithms": ["sha256"]
+      }
     },
     "nsis": {
       "oneClick": false,
@@ -48,7 +52,10 @@
       "createStartMenuShortcut": true
     }
   },
+  "engines": {
+    "node": ">=20"
+  },
   "allowScripts": {
-    "electron@33.4.11": true
+    "electron@44.9.2": true
   }
 }

@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { config } from "../config.js";
 import { cached } from "../cache.js";
+import { sanitizeArtworkUrl } from "../artwork.js";
 import { getShortEpg, listLiveCategories, listLiveStreams } from "../clients/xtream.js";
 
 export async function liveRoutes(app: FastifyInstance) {
@@ -14,7 +15,7 @@ export async function liveRoutes(app: FastifyInstance) {
     const channels = streams.map((s) => ({
       id: s.stream_id,
       name: s.name,
-      icon: s.stream_icon,
+      icon: sanitizeArtworkUrl(s.stream_icon),
       category: categoryNames.get(s.category_id) ?? "Uncategorized",
     }));
 

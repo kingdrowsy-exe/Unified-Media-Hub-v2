@@ -1,3 +1,5 @@
+import { isSafePlexProbe } from "../streamAllowlist.js";
+import { fetchProvider, readJsonLimited } from "../upstream.js";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -52,30 +54,32 @@ interface PlexResource {
 
 export async function createPin(): Promise<PlexPin> {
   const clientId = getClientIdentifier();
-  const res = await fetch("https://plex.tv/api/v2/pins", {
+  const res = await fetchProvider("https://plex.tv/api/v2/pins", {
     method: "POST",
     headers: headers(clientId),
   });
   if (!res.ok) {
     throw new Error(`Failed to create Plex pin: ${res.status}`);
   }
-  return (await res.json()) as PlexPin;
+  return readJsonLimited<PlexPin>(res);
 }
 
 export async function checkPin(pinId: number): Promise<PlexPin> {
   const clientId = getClientIdentifier();
-  const res = await fetch(`https://plex.tv/api/v2/pins/${pinId}`, {
+  const res = await fetchProvider(`https://plex.tv/api/v2/pins/${pinId}`, {
     headers: headers(clientId),
   });
   if (!res.ok) {
     throw new Error(`Failed to check Plex pin: ${res.status}`);
   }
-  return (await res.json()) as PlexPin;
+  return readJsonLimited<PlexPin>(res);
 }
 
-async function isReachable(uri: string): Promise<boolean> {
+export async function isReachable(uri: string): Promise<boolean> {
+  if (!isSafePlexProbe(uri)) return false;
   try {
-    const res = await fetch(`${uri}/identity`, { signal: AbortSignal.timeout(3000) });
+    const res = await fetchProvider(`${uri}/identity`, { signal: AbortSignal.timeout(3000) });
+    await res.body?.cancel().catch(() => undefined);
     return res.ok;
   } catch {
     return false;
@@ -107,11 +111,11 @@ export async function resolveServerFromAuthToken(
   url.searchParams.set("includeHttps", "1");
   url.searchParams.set("includeRelay", "1");
   url.searchParams.set("X-Plex-Token", authToken);
-  const res = await fetch(url, { headers: headers(clientId) });
+  const res = await fetchProvider(url, { headers: headers(clientId) });
   if (!res.ok) {
     throw new Error(`Failed to list Plex resources: ${res.status}`);
   }
-  const resources = (await res.json()) as PlexResource[];
+  const resources = await readJsonLimited<PlexResource[]>(res);
   const servers = resources.filter((r) => r.provides.includes("server"));
   if (servers.length === 0) {
     throw new Error("No Plex Media Server found on this account.");
