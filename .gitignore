@@ -7,3 +7,5 @@ release/
 *.tsbuildinfo
 *.log
 .env
+data/
+crash.log
