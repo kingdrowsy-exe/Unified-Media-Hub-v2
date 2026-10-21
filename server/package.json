@@ -7,7 +7,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
-    "test": "node --import tsx --test test/*.test.ts"
+    "test": "node --import tsx --test test/access.test.ts test/boundaries.test.ts test/plex-proxy.test.ts test/policy.test.ts test/redact.test.ts test/urls.test.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.1.0",
