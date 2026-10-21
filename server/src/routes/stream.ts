@@ -17,6 +17,10 @@ import { NotConfiguredError } from "../settingsStore.js";
 
 function isPlaylist(contentType: string, url: string): boolean {
   const type = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+  // A live MPEG-TS is often served from the .m3u8 URL, or after a 302 to another
+  // host. The playlist cap must not cut that body. A generic type still uses the
+  // URL, because panels return real playlists as application/octet-stream.
+  if (type.startsWith("video/") || type.startsWith("audio/")) return false;
   return type.includes("mpegurl") || /\.m3u8(\?|$)/i.test(url);
 }
 

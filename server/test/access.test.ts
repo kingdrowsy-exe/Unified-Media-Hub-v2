@@ -112,6 +112,11 @@ test("api is local to the app", async (t) => {
 
     const provider = await listen("127.0.0.2", (req, res) => {
       const pathname = req.url?.split("?")[0] ?? "/";
+      if (pathname.endsWith("/3.m3u8")) {
+        res.writeHead(200, { "content-type": "video/mp2t" });
+        res.end("ts-not-a-playlist");
+        return;
+      }
       if (pathname.endsWith("/9.m3u8")) {
         res.writeHead(200, { "content-type": "application/vnd.apple.mpegurl" });
         res.end("#EXTM3U\nclip.ts\n");
@@ -430,6 +435,16 @@ test("api is local to the app", async (t) => {
     const plainRes = await fetch(`${base}/api/hls?t=${plainTickets[0]}`);
     assert.equal(plainRes.status, 200);
     assert.equal(await plainRes.text(), "plain-segment");
+
+    process.env.UMH_MAX_PLAYLIST_BYTES = "8";
+    try {
+      const directTs = await fetch(`${base}/api/stream/live/3`);
+      assert.equal(directTs.status, 200);
+      assert.equal(directTs.headers.get("content-type"), "video/mp2t");
+      assert.equal(await directTs.text(), "ts-not-a-playlist");
+    } finally {
+      delete process.env.UMH_MAX_PLAYLIST_BYTES;
+    }
 
     const forged = await fetch(`${base}/api/hls?t=not-a-real-ticket-value`);
     assert.equal(forged.status, 403);
