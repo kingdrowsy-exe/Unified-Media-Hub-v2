@@ -40,7 +40,9 @@
     "icon": "build/icon.ico",
     "win": {
       "target": "nsis",
-      "signingHashAlgorithms": ["sha256"]
+      "signtoolOptions": {
+        "signingHashAlgorithms": ["sha256"]
+      }
     },
     "nsis": {
       "oneClick": false,
