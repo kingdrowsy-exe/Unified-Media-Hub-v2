@@ -47,5 +47,9 @@ export function isAppOrigin(origin: string): boolean {
   if (!isLoopbackHostname(url.hostname)) return false;
   const port = url.port || (url.protocol === "https:" ? "443" : "80");
   if (port === String(config.port)) return true;
+  // The packaged app only talks to itself. Vite's ports stay open for `npm run dev`,
+  // where the dev server's Origin is forwarded at the proxy. A page on port 5173
+  // must not be able to read the desktop app's API.
+  if (process.env.UMH_DESKTOP === "1") return false;
   return VITE_DEV_PORTS.has(port);
 }

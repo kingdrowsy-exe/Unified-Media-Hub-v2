@@ -1,4 +1,6 @@
+import { sanitizeArtworkUrl } from "../artwork.js";
 import { NotConfiguredError, settingsStore } from "../settingsStore.js";
+import { fetchProvider, readJsonLimited } from "../upstream.js";
 
 // Silo's real native API (confirmed against a live instance) - not Jellyfin/Emby
 // despite also offering a separate Jellyfin-compat layer on port 8096 (not exposed
@@ -79,7 +81,7 @@ export function resetSiloSession() {
 
 async function authenticate(): Promise<{ accessToken: string; expiresAt: number }> {
   const silo = requireSilo();
-  const res = await fetch(`${silo.baseUrl}/api/v1/auth/login`, {
+  const res = await fetchProvider(`${silo.baseUrl}/api/v1/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username: silo.username, password: silo.password }),
@@ -88,7 +90,7 @@ async function authenticate(): Promise<{ accessToken: string; expiresAt: number 
   if (!res.ok || !contentType.includes("application/json")) {
     throw new Error(`Silo authentication failed: ${res.status}`);
   }
-  const data = (await res.json()) as SiloAuthResult;
+  const data = await readJsonLimited<SiloAuthResult>(res);
   session = { accessToken: data.access_token, expiresAt: Date.now() + data.expires_in * 1000 };
   return session;
 }
@@ -104,13 +106,13 @@ async function getProfileId(): Promise<string> {
   if (profileId) return profileId;
   const silo = requireSilo();
   const s = await getSession();
-  const res = await fetch(`${silo.baseUrl}/api/v1/profiles`, {
+  const res = await fetchProvider(`${silo.baseUrl}/api/v1/profiles`, {
     headers: { Authorization: `Bearer ${s.accessToken}` },
   });
   if (!res.ok) {
     throw new Error(`Silo profile lookup failed: ${res.status}`);
   }
-  const data = (await res.json()) as { profiles: SiloProfile[] };
+  const data = await readJsonLimited<{ profiles: SiloProfile[] }>(res);
   const profile = data.profiles.find((p) => p.is_primary) ?? data.profiles[0];
   if (!profile) {
     throw new Error("Silo account has no profiles");
@@ -125,7 +127,7 @@ function toSiloItem(item: SiloCatalogItem): SiloItem {
     Name: item.title,
     ProductionYear: item.year,
     Type: "Movie",
-    posterUrl: item.poster_url,
+    posterUrl: sanitizeArtworkUrl(item.poster_url),
     genre: item.genres?.[0],
     ratingPercent:
       item.rating_tmdb !== undefined
@@ -141,11 +143,11 @@ async function fetchCatalog(query?: string): Promise<SiloItem[]> {
   const s = await getSession();
   const url = new URL(`${silo.baseUrl}/api/v1/catalog`);
   if (query) url.searchParams.set("q", query);
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${s.accessToken}` } });
+  const res = await fetchProvider(url, { headers: { Authorization: `Bearer ${s.accessToken}` } });
   if (!res.ok) {
     throw new Error(`Silo catalog request failed: ${res.status}`);
   }
-  const data = (await res.json()) as { items: SiloCatalogItem[] };
+  const data = await readJsonLimited<{ items: SiloCatalogItem[] }>(res);
   return data.items.filter((item) => item.type === "movie").map(toSiloItem);
 }
 
@@ -169,13 +171,13 @@ export function siloPosterUrl(_itemId: string, item?: { posterUrl?: string }): s
 export async function getSiloMediaVersions(contentId: string): Promise<SiloMediaVersion[]> {
   const silo = requireSilo();
   const s = await getSession();
-  const res = await fetch(`${silo.baseUrl}/api/v1/watch/${contentId}`, {
+  const res = await fetchProvider(`${silo.baseUrl}/api/v1/watch/${contentId}`, {
     headers: { Authorization: `Bearer ${s.accessToken}` },
   });
   if (!res.ok) {
     throw new Error(`Silo item isn't directly playable (${res.status})`);
   }
-  const data = (await res.json()) as { versions?: SiloWatchVersion[] };
+  const data = await readJsonLimited<{ versions?: SiloWatchVersion[] }>(res);
   return (data.versions ?? []).map((v) => ({
     contentId,
     fileId: v.file_id,
@@ -230,11 +232,11 @@ export async function resolveSiloStreamUrl(contentId: string): Promise<{ url: st
   const s = await getSession();
   const headers = { Authorization: `Bearer ${s.accessToken}` };
 
-  const watchRes = await fetch(`${silo.baseUrl}/api/v1/watch/${contentId}`, { headers });
+  const watchRes = await fetchProvider(`${silo.baseUrl}/api/v1/watch/${contentId}`, { headers });
   if (!watchRes.ok) {
     throw new Error(`Silo item isn't directly playable (${watchRes.status})`);
   }
-  const watch = (await watchRes.json()) as { versions?: SiloWatchVersion[] };
+  const watch = await readJsonLimited<{ versions?: SiloWatchVersion[] }>(watchRes);
   const fileId = watch.versions?.[0]?.file_id;
   if (fileId === undefined) {
     throw new Error("No playable file found for this Silo title");
@@ -277,7 +279,7 @@ export async function resolveSiloStreamUrl(contentId: string): Promise<{ url: st
     },
   };
 
-  const startRes = await fetch(`${silo.baseUrl}/api/v1/playback/start`, {
+  const startRes = await fetchProvider(`${silo.baseUrl}/api/v1/playback/start`, {
     method: "POST",
     headers: { ...headers, "Content-Type": "application/json", "X-Profile-Id": profile },
     body: JSON.stringify(body),
@@ -285,11 +287,17 @@ export async function resolveSiloStreamUrl(contentId: string): Promise<{ url: st
   if (!startRes.ok) {
     throw new Error(`Silo playback couldn't start (${startRes.status})`);
   }
-  const plan = (await startRes.json()) as { playback_plan?: { stream?: { url?: string } } };
+  const plan = await readJsonLimited<{ playback_plan?: { stream?: { url?: string } } }>(startRes);
   const streamPath = plan.playback_plan?.stream?.url;
   if (!streamPath) {
     throw new Error("Silo didn't return a playable stream for this title");
   }
 
-  return { url: `${silo.baseUrl}/api/v1${streamPath}`, accessToken: s.accessToken };
+  const base = new URL(silo.baseUrl);
+  const joined = `${base.origin}/api/v1${streamPath.startsWith("/") ? streamPath : `/${streamPath}`}`;
+  const target = new URL(joined);
+  if (target.origin !== base.origin || target.username || target.password) {
+    throw new Error("Silo returned a stream outside the configured server");
+  }
+  return { url: target.toString(), accessToken: s.accessToken };
 }

@@ -63,8 +63,8 @@ function expectRefused(ip: string, targetPort: number): Promise<void> {
   });
 }
 
-function proxiedUrls(playlist: string): string[] {
-  return [...playlist.matchAll(/\/api\/hls\?u=([^"\s]+)/g)].map((match) => decodeURIComponent(match[1]));
+function playlistTickets(playlist: string): string[] {
+  return [...playlist.matchAll(/\/api\/hls\?t=([A-Za-z0-9_-]+)/g)].map((match) => match[1]);
 }
 
 function listen(host: string, handler: http.RequestListener): Promise<{ server: http.Server; port: number }> {
@@ -83,6 +83,7 @@ test("api is local to the app", async (t) => {
   let cdnBase = "";
   let secretHits = 0;
   let secretPort = 0;
+  let clipPath = "";
   const closers: Array<() => void | Promise<void>> = [];
 
   t.before(async () => {
@@ -111,6 +112,17 @@ test("api is local to the app", async (t) => {
 
     const provider = await listen("127.0.0.2", (req, res) => {
       const pathname = req.url?.split("?")[0] ?? "/";
+      if (pathname.endsWith("/9.m3u8")) {
+        res.writeHead(200, { "content-type": "application/vnd.apple.mpegurl" });
+        res.end("#EXTM3U\nclip.ts\n");
+        return;
+      }
+      if (pathname.endsWith("/clip.ts")) {
+        clipPath = pathname;
+        res.writeHead(200, { "content-type": "video/mp2t" });
+        res.end("clip-bytes");
+        return;
+      }
       if (pathname.startsWith("/live/") && pathname.endsWith(".m3u8")) {
         const location = pathname.includes("/2.m3u8") ? "/real/plain" : "/real/index.m3u8";
         res.writeHead(302, { location });
@@ -133,6 +145,10 @@ test("api is local to the app", async (t) => {
           "#EXTINF:4.0,",
           `http://127.0.0.1:${secretPort}/local-secret.ts`,
         ];
+        lines.push("#EXTINF:4.0,", "http://10.1.2.3/x.ts");
+        lines.push("#EXTINF:4.0,", `http://2130706433:${secretPort}/secret`);
+        lines.push("#EXTINF:4.0,", `${providerBase}/bounce-local`);
+        lines.push("#EXTINF:4.0,", "page.html");
         if (cdnBase) {
           lines.push("#EXTINF:4.0,", `${cdnBase}/seg.ts`);
         }
@@ -171,13 +187,18 @@ test("api is local to the app", async (t) => {
         res.end("key-bytes");
         return;
       }
+      if (pathname === "/real/page.html") {
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        res.end("<html><script>alert(1)</script></html>");
+        return;
+      }
       res.writeHead(404);
       res.end("missing");
     });
     providerBase = `http://127.0.0.2:${provider.port}`;
     closers.push(() => provider.server.close());
 
-    settingsStore.setXtream({ baseUrl: providerBase, username: "user", password: "pass" });
+    settingsStore.setXtream({ baseUrl: providerBase, username: "alice", password: "s3cret" });
     clearLearnedStreamHosts();
 
     app = await startServer();
@@ -196,6 +217,14 @@ test("api is local to the app", async (t) => {
     assert.equal(isAppOrigin("http://localhost:5173"), true);
     assert.equal(isAppOrigin("http://127.0.0.1:5174"), true);
     assert.equal(isAppOrigin("http://[::1]:5173"), true);
+    process.env.UMH_DESKTOP = "1";
+    try {
+      assert.equal(isAppOrigin("http://localhost:5173"), false);
+      assert.equal(isAppOrigin("http://127.0.0.1:5174"), false);
+      assert.equal(isAppOrigin(`http://127.0.0.1:${port}`), true);
+    } finally {
+      delete process.env.UMH_DESKTOP;
+    }
     assert.equal(isAppOrigin("https://evil.example"), false);
     assert.equal(isAppOrigin(`http://192.168.1.20:${port}`), false);
     assert.equal(isAppOrigin("null"), false);
@@ -208,7 +237,7 @@ test("api is local to the app", async (t) => {
 
   await t.test("allows configured provider hosts and playlist hosts, not loopback relays", () => {
     clearLearnedStreamHosts();
-    assert.equal(isAllowedStreamUrl(`${providerBase}/live/user/pass/1.m3u8`), true);
+    assert.equal(isAllowedStreamUrl(`${providerBase}/live/alice/s3cret/1.m3u8`), true);
     assert.equal(isAllowedStreamUrl("http://127.0.0.2:1/other-port"), false);
     assert.equal(isAllowedStreamUrl("http://cdn.invalid/seg.ts"), false);
     assert.equal(isAllowedStreamUrl("http://2130706433/secret"), false);
@@ -216,13 +245,28 @@ test("api is local to the app", async (t) => {
     assert.equal(isAllowedStreamUrl("file:///etc/passwd"), false);
 
     assert.equal(rememberStreamUrl("http://cdn.invalid/seg.ts"), true);
-    assert.equal(isAllowedStreamUrl("http://cdn.invalid:9999/other-path"), true);
-    assert.equal(rememberStreamUrl(`http://127.0.0.1:${secretPort}/owned`), false);
-    assert.equal(isAllowedStreamUrl(`http://127.0.0.1:${secretPort}/owned`), false);
+    assert.equal(isAllowedStreamUrl("http://cdn.invalid/other-path"), true);
+    assert.equal(isAllowedStreamUrl("http://cdn.invalid:9999/other-path"), false);
+    assert.equal(rememberStreamUrl("https://cdn.example/a.ts"), true);
+    assert.equal(isAllowedStreamUrl("http://cdn.example/b.ts"), true);
+    for (const blocked of [
+      "http://10.1.2.3/a",
+      "http://192.168.0.1/a",
+      "http://172.16.0.1/a",
+      "http://[::1]/a",
+      "http://[fc00::1]/a",
+      "http://[::ffff:10.0.0.1]/a",
+      "http://metadata.google.internal/a",
+      "http://router.local/a",
+      `http://127.0.0.1:${secretPort}/owned`,
+    ]) {
+      assert.equal(rememberStreamUrl(blocked), false, blocked);
+      assert.equal(isAllowedStreamUrl(blocked), false, blocked);
+    }
 
     clearLearnedStreamHosts();
     assert.equal(isAllowedStreamUrl("http://cdn.invalid/seg.ts"), false);
-    assert.equal(isAllowedStreamUrl(`${providerBase}/live/user/pass/1.m3u8`), true);
+    assert.equal(isAllowedStreamUrl(`${providerBase}/live/alice/s3cret/1.m3u8`), true);
   });
 
   await t.test("listens on 127.0.0.1 only", async () => {
@@ -267,6 +311,42 @@ test("api is local to the app", async (t) => {
     });
     assert.equal(host.status, 403);
     assert.match(host.body, /forbidden/);
+
+    const crossSite = await new Promise<{ status?: number }>((resolve, reject) => {
+      const req = http.request(
+        {
+          host: "127.0.0.1",
+          port,
+          path: "/api/settings/status",
+          headers: { "Sec-Fetch-Site": "cross-site" },
+        },
+        (res) => {
+          res.resume();
+          res.on("end", () => resolve({ status: res.statusCode }));
+        },
+      );
+      req.on("error", reject);
+      req.end();
+    });
+    assert.equal(crossSite.status, 403);
+
+    const sameSite = await new Promise<{ status?: number }>((resolve, reject) => {
+      const req = http.request(
+        {
+          host: "127.0.0.1",
+          port,
+          path: "/api/settings/status",
+          headers: { "Sec-Fetch-Site": "same-site" },
+        },
+        (res) => {
+          res.resume();
+          res.on("end", () => resolve({ status: res.statusCode }));
+        },
+      );
+      req.on("error", reject);
+      req.end();
+    });
+    assert.equal(sameSite.status, 403);
   });
 
   await t.test("serves the app origin and the Vite dev origin", async () => {
@@ -294,83 +374,78 @@ test("api is local to the app", async (t) => {
     assert.equal(reached.status, 400);
   });
 
-  await t.test("proxies a provider playlist, its redirect, and learned segment hosts", async () => {
+  await t.test("proxies a provider playlist through tickets and refuses relays", async () => {
     clearLearnedStreamHosts();
     secretHits = 0;
+    clipPath = "";
 
-    const blocked = await fetch(`${base}/api/hls?u=${encodeURIComponent("http://cdn.invalid/seg.ts")}`);
-    assert.equal(blocked.status, 403);
-    if (cdnBase) {
-      const earlyCdn = await fetch(`${base}/api/hls?u=${encodeURIComponent(`${cdnBase}/seg.ts`)}`);
-      assert.equal(earlyCdn.status, 403);
-    }
+    const raw = await fetch(`${base}/api/hls?u=${encodeURIComponent("http://cdn.invalid/seg.ts")}`);
+    assert.equal(raw.status, 400);
 
     const playlistRes = await fetch(`${base}/api/stream/live/1`);
     assert.equal(playlistRes.status, 200);
     assert.match(playlistRes.headers.get("content-type") ?? "", /mpegurl/);
     const playlist = await playlistRes.text();
-    const urls = proxiedUrls(playlist);
-    const segment = urls.find((url) => url.endsWith("/real/seg.ts"));
-    const key = urls.find((url) => url.endsWith("/real/key.bin"));
-    const cdn = urls.find((url) => url.startsWith("http://cdn.invalid/"));
-    const local = urls.find((url) => url.includes("/local-secret.ts"));
-    assert.ok(segment, playlist);
-    assert.ok(key, playlist);
-    assert.ok(cdn, playlist);
-    assert.ok(local, playlist);
+    assert.equal(playlist.includes("s3cret"), false);
+    assert.equal(playlist.includes("127.0.0.1"), false);
+    assert.equal(playlist.includes("10.1.2.3"), false);
+    assert.equal(playlist.includes("2130706433"), false);
+    if (cdnBase) assert.equal(playlist.includes(new URL(cdnBase).hostname), false);
+    assert.match(playlist, /# blocked/);
+    const tickets = playlistTickets(playlist);
+    assert.equal(tickets.length, 5, playlist);
 
-    const segmentRes = await fetch(`${base}/api/hls?u=${encodeURIComponent(segment)}`);
-    assert.equal(segmentRes.status, 200);
-    assert.equal(await segmentRes.text(), "segment-bytes");
+    const bodies = new Map<string, { status: number; body: string; headers: Headers }>();
+    for (const ticket of tickets) {
+      const res = await fetch(`${base}/api/hls?t=${ticket}`);
+      bodies.set(ticket, { status: res.status, body: await res.text(), headers: res.headers });
+    }
+    const segment = [...bodies.values()].find((entry) => entry.body === "segment-bytes");
+    const key = [...bodies.values()].find((entry) => entry.body === "key-bytes");
+    const cdn = [...bodies.values()].find((entry) => entry.status === 502);
+    const bounce = [...bodies.values()].find((entry) => entry.status === 403);
+    const page = [...bodies.values()].find((entry) => entry.body.includes("<script"));
+    assert.ok(segment, JSON.stringify([...bodies.values()].map((entry) => entry.status)));
+    assert.ok(key);
+    assert.ok(cdn);
+    assert.ok(bounce);
+    assert.ok(page);
+    assert.equal(page.headers.get("content-type"), "application/octet-stream");
+    assert.equal(page.headers.get("x-content-type-options"), "nosniff");
+    assert.match(page.headers.get("content-security-policy") ?? "", /default-src 'none'/);
+    assert.equal(secretHits, 0);
 
-    const ranged = await fetch(`${base}/api/hls?u=${encodeURIComponent(segment)}`, {
-      headers: { Range: "bytes=0-3" },
-    });
+    const segmentTicket = tickets.find((ticket) => bodies.get(ticket)?.body === "segment-bytes");
+    assert.ok(segmentTicket);
+    const ranged = await fetch(`${base}/api/hls?t=${segmentTicket}`, { headers: { Range: "bytes=0-3" } });
     assert.equal(ranged.status, 206);
     assert.equal(ranged.headers.get("content-range"), "bytes 0-3/13");
     assert.equal(await ranged.text(), "segm");
 
-    const keyRes = await fetch(`${base}/api/hls?u=${encodeURIComponent(key)}`);
-    assert.equal(keyRes.status, 200);
-    assert.equal(await keyRes.text(), "key-bytes");
-
-    const learned = await fetch(`${base}/api/hls?u=${encodeURIComponent("http://cdn.invalid:9999/elsewhere.ts")}`);
-    assert.equal(learned.status, 502);
-
-    if (cdnBase) {
-      const cdnUrl = urls.find((url) => url.startsWith(`${cdnBase}/seg.ts`));
-      assert.ok(cdnUrl, playlist);
-      const cdnRes = await fetch(`${base}/api/hls?u=${encodeURIComponent(cdnUrl)}`);
-      assert.equal(cdnRes.status, 200);
-      assert.equal(await cdnRes.text(), "cdn-segment");
-    }
-
     const plain = await fetch(`${base}/api/stream/live/2`);
     assert.equal(plain.status, 200);
     assert.match(plain.headers.get("content-type") ?? "", /mpegurl/);
-    const plainBody = await plain.text();
-    const plainSegment = proxiedUrls(plainBody).find((url) => url.endsWith("/real/plain-seg.ts"));
-    assert.ok(plainSegment, plainBody);
-    const plainRes = await fetch(`${base}/api/hls?u=${encodeURIComponent(plainSegment)}`);
+    const plainTickets = playlistTickets(await plain.text());
+    assert.equal(plainTickets.length, 1);
+    const plainRes = await fetch(`${base}/api/hls?t=${plainTickets[0]}`);
     assert.equal(plainRes.status, 200);
     assert.equal(await plainRes.text(), "plain-segment");
 
-    const notLearned = await fetch(`${base}/api/hls?u=${encodeURIComponent("http://not-a-provider.invalid/x.ts")}`);
-    assert.equal(notLearned.status, 403);
-
-    const loopback = await fetch(`${base}/api/hls?u=${encodeURIComponent(local)}`);
-    assert.equal(loopback.status, 403);
+    const forged = await fetch(`${base}/api/hls?t=not-a-real-ticket-value`);
+    assert.equal(forged.status, 403);
     assert.equal(secretHits, 0);
 
-    const decimal = await fetch(
-      `${base}/api/hls?u=${encodeURIComponent(`http://2130706433:${secretPort}/secret`)}`,
-    );
-    assert.equal(decimal.status, 403);
-    assert.equal(secretHits, 0);
-
-    const bounce = await fetch(`${base}/api/hls?u=${encodeURIComponent(`${providerBase}/bounce-local`)}`);
-    assert.equal(bounce.status, 403);
-    assert.equal(secretHits, 0);
+    const direct = await fetch(`${base}/api/stream/live/9`);
+    assert.equal(direct.status, 200);
+    const directBody = await direct.text();
+    assert.equal(directBody.includes("s3cret"), false);
+    assert.equal(directBody.includes("/live/alice/"), false);
+    const clipTickets = playlistTickets(directBody);
+    assert.equal(clipTickets.length, 1);
+    const clipRes = await fetch(`${base}/api/hls?t=${clipTickets[0]}`);
+    assert.equal(clipRes.status, 200);
+    assert.equal(await clipRes.text(), "clip-bytes");
+    assert.match(clipPath, /\/live\/alice\/s3cret\/clip\.ts$/);
   });
 
   await t.test("dropping a provider forgets hosts learned from its playlists", async () => {
@@ -381,9 +456,9 @@ test("api is local to the app", async (t) => {
     });
     assert.equal(removed.status, 200);
     assert.equal(isAllowedStreamUrl("http://cdn.invalid/cdn/other.ts"), false);
-    assert.equal(isAllowedStreamUrl(`${providerBase}/live/user/pass/1.m3u8`), false);
+    assert.equal(isAllowedStreamUrl(`${providerBase}/live/alice/s3cret/1.m3u8`), false);
 
-    settingsStore.setXtream({ baseUrl: providerBase, username: "user", password: "pass" });
+    settingsStore.setXtream({ baseUrl: providerBase, username: "alice", password: "s3cret" });
     clearLearnedStreamHosts();
   });
 });

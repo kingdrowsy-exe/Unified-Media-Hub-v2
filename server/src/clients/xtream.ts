@@ -1,4 +1,5 @@
 import { NotConfiguredError, settingsStore } from "../settingsStore.js";
+import { fetchProvider, readJsonLimited } from "../upstream.js";
 
 export interface XtreamCategory {
   category_id: string;
@@ -49,11 +50,11 @@ function apiUrl(action: string, extra: Record<string, string> = {}) {
 }
 
 async function xtreamFetch<T>(action: string, extra: Record<string, string> = {}): Promise<T> {
-  const res = await fetch(apiUrl(action, extra));
+  const res = await fetchProvider(apiUrl(action, extra));
   if (!res.ok) {
     throw new Error(`Xtream request failed: ${res.status} action=${action}`);
   }
-  return (await res.json()) as T;
+  return readJsonLimited<T>(res);
 }
 
 export async function listLiveCategories(): Promise<XtreamCategory[]> {

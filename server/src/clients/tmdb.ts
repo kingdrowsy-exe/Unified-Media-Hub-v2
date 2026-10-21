@@ -1,4 +1,5 @@
 import { NotConfiguredError, settingsStore } from "../settingsStore.js";
+import { fetchProvider, readJsonLimited } from "../upstream.js";
 
 const API_BASE = "https://api.themoviedb.org/3";
 const POSTER_BASE = "https://image.tmdb.org/t/p/w500";
@@ -43,13 +44,14 @@ function requireTmdb() {
 
 async function tmdbFetch<T>(path: string): Promise<T> {
   const tmdb = requireTmdb();
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetchProvider(`${API_BASE}${path}`, {
     headers: { Authorization: `Bearer ${tmdb.accessToken}`, Accept: "application/json" },
   });
   if (!res.ok) {
+    await res.body?.cancel().catch(() => undefined);
     throw new Error(`TMDB request failed: ${res.status} ${path}`);
   }
-  return (await res.json()) as T;
+  return readJsonLimited<T>(res);
 }
 
 // Genre id -> name lists rarely change, so cache them in-memory for the process lifetime

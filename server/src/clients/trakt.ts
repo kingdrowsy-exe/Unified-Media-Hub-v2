@@ -1,4 +1,5 @@
 import { NotConfiguredError, settingsStore } from "../settingsStore.js";
+import { fetchProvider, readJsonLimited } from "../upstream.js";
 
 const API_BASE = "https://api.trakt.tv";
 
@@ -30,11 +31,12 @@ function baseHeaders(clientId: string): Record<string, string> {
 // token - safe to call any time Trakt is connected, whether or not the account is linked.
 async function traktFetch<T>(path: string): Promise<T> {
   const trakt = requireTrakt();
-  const res = await fetch(`${API_BASE}${path}`, { headers: baseHeaders(trakt.clientId) });
+  const res = await fetchProvider(`${API_BASE}${path}`, { headers: baseHeaders(trakt.clientId) });
   if (!res.ok) {
+    await res.body?.cancel().catch(() => undefined);
     throw new Error(`Trakt request failed: ${res.status} ${path}`);
   }
-  return (await res.json()) as T;
+  return readJsonLimited<T>(res);
 }
 
 async function refreshAccessToken(): Promise<void> {
@@ -42,7 +44,7 @@ async function refreshAccessToken(): Promise<void> {
   if (!trakt.refreshToken) {
     throw new Error("Trakt session expired - reconnect your account");
   }
-  const res = await fetch(`${API_BASE}/oauth/token`, {
+  const res = await fetchProvider(`${API_BASE}/oauth/token`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -53,9 +55,10 @@ async function refreshAccessToken(): Promise<void> {
     }),
   });
   if (!res.ok) {
+    await res.body?.cancel().catch(() => undefined);
     throw new Error("Trakt session expired - reconnect your account");
   }
-  const data = (await res.json()) as { access_token: string; refresh_token: string; expires_in: number };
+  const data = await readJsonLimited<{ access_token: string; refresh_token: string; expires_in: number }>(res);
   settingsStore.updateTrakt({
     accessToken: data.access_token,
     refreshToken: data.refresh_token,
@@ -68,22 +71,27 @@ async function refreshAccessToken(): Promise<void> {
 async function traktAuthFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   let trakt = requireTraktAuth();
   const doFetch = () =>
-    fetch(`${API_BASE}${path}`, {
+    fetchProvider(`${API_BASE}${path}`, {
       ...init,
       headers: { ...baseHeaders(trakt.clientId), Authorization: `Bearer ${trakt.accessToken}`, ...init.headers },
     });
 
   let res = await doFetch();
   if (res.status === 401) {
+    await res.body?.cancel().catch(() => undefined);
     await refreshAccessToken();
     trakt = requireTraktAuth();
     res = await doFetch();
   }
   if (!res.ok) {
+    await res.body?.cancel().catch(() => undefined);
     throw new Error(`Trakt request failed: ${res.status} ${path}`);
   }
-  if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
+  if (res.status === 204) {
+    await res.body?.cancel().catch(() => undefined);
+    return undefined as T;
+  }
+  return readJsonLimited<T>(res);
 }
 
 export interface TraktDeviceCode {
@@ -95,21 +103,22 @@ export interface TraktDeviceCode {
 }
 
 export async function createDeviceCode(clientId: string): Promise<TraktDeviceCode> {
-  const res = await fetch(`${API_BASE}/oauth/device/code`, {
+  const res = await fetchProvider(`${API_BASE}/oauth/device/code`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ client_id: clientId }),
   });
   if (!res.ok) {
+    await res.body?.cancel().catch(() => undefined);
     throw new Error("Couldn't start Trakt device authorization. Check your Client ID.");
   }
-  const data = (await res.json()) as {
+  const data = await readJsonLimited<{
     device_code: string;
     user_code: string;
     verification_url: string;
     expires_in: number;
     interval: number;
-  };
+  }>(res);
   return {
     deviceCode: data.device_code,
     userCode: data.user_code,
@@ -126,16 +135,20 @@ export async function pollDeviceToken(
   clientSecret: string,
   deviceCode: string,
 ): Promise<{ accessToken: string; refreshToken: string; expiresAt: number } | null> {
-  const res = await fetch(`${API_BASE}/oauth/device/token`, {
+  const res = await fetchProvider(`${API_BASE}/oauth/device/token`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ code: deviceCode, client_id: clientId, client_secret: clientSecret }),
   });
-  if (res.status === 400) return null; // authorization pending
+  if (res.status === 400) {
+    await res.body?.cancel().catch(() => undefined);
+    return null; // authorization pending
+  }
   if (!res.ok) {
+    await res.body?.cancel().catch(() => undefined);
     throw new Error(`Trakt authorization failed (${res.status}). Start over.`);
   }
-  const data = (await res.json()) as { access_token: string; refresh_token: string; expires_in: number };
+  const data = await readJsonLimited<{ access_token: string; refresh_token: string; expires_in: number }>(res);
   return {
     accessToken: data.access_token,
     refreshToken: data.refresh_token,
@@ -148,7 +161,8 @@ export async function verifyAccountLink(): Promise<void> {
 }
 
 export async function validateClientId(clientId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/movies/trending?limit=1`, { headers: baseHeaders(clientId) });
+  const res = await fetchProvider(`${API_BASE}/movies/trending?limit=1`, { headers: baseHeaders(clientId) });
+  await res.body?.cancel().catch(() => undefined);
   if (!res.ok) {
     throw new Error("Trakt login failed. Check your Client ID.");
   }

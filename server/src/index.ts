@@ -3,10 +3,14 @@ import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
-import { isIsolatedUpstreamError, recordCrash } from "./crashLog.js";
+import { recordCrash } from "./crashLog.js";
 import { config } from "./config.js";
 import { isAppOrigin, isLoopbackHostHeader } from "./localAccess.js";
-import { redactUrl } from "./redact.js";
+import { redactText, redactUrl } from "./redact.js";
+import { installUpstreamGuards } from "./upstream.js";
+import "./streamTickets.js";
+
+installUpstreamGuards();
 import { NotConfiguredError } from "./settingsStore.js";
 import { onDemandRoutes } from "./routes/ondemand.js";
 import { liveRoutes } from "./routes/live.js";
@@ -18,16 +22,17 @@ import { traktRoutes } from "./routes/trakt.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// A truncated response from a flaky provider can throw inside undici, outside the
-// request that triggered it. Those errors are confined to that socket, so the
-// desktop app stays up. Anything else is process-wide: write crash.log and exit.
-process.on("uncaughtException", (err) => {
-  recordCrash("uncaughtException", err);
-  if (isIsolatedUpstreamError(err)) return;
+// Socket failures that undici cannot attach to a request are handled on the
+// dispatcher (see upstream.ts). Anything that still escapes is process-wide.
+function fatal(kind: string, err: unknown): void {
+  recordCrash(kind, err);
   process.exit(1);
+}
+process.on("uncaughtException", (err) => {
+  fatal("uncaughtException", err);
 });
 process.on("unhandledRejection", (reason) => {
-  recordCrash("unhandledRejection", reason);
+  fatal("unhandledRejection", reason);
 });
 
 export async function startServer() {
@@ -41,16 +46,22 @@ export async function startServer() {
               req(request) {
                 return { method: request.method, url: redactUrl(request.url) };
               },
+              err(error) {
+                const err = error as Error;
+                return {
+                  type: err.name,
+                  message: redactText(err.message),
+                  stack: redactText(err.stack ?? ""),
+                };
+              },
             },
           },
   });
 
   // Websites and other LAN devices must not be able to call this API. The
-  // socket is loopback-only (see listen below). This hook refuses a browser
-  // request whose Origin is not the app window or the Vite dev server, which
-  // also stops "simple" GETs such as /api/hls that CORS headers alone would
-  // still let the browser send. Same-origin app requests often omit Origin
-  // and are allowed; cross-site browser requests always send one.
+  // socket is loopback-only (see listen below). Browsers omit Origin on
+  // no-cors GETs such as <img>, so Origin alone does not stop those. They do
+  // send Sec-Fetch-Site: cross-site, which a page on this origin never does.
   app.addHook("onRequest", (request, reply, done) => {
     const host = request.headers.host;
     if (Array.isArray(host) || !isLoopbackHostHeader(host)) {
@@ -60,6 +71,12 @@ export async function startServer() {
     const origin = request.headers.origin;
     if (Array.isArray(origin) || (origin !== undefined && !isAppOrigin(origin))) {
       reply.code(403).send({ error: "forbidden_origin" });
+      return;
+    }
+    const site = request.headers["sec-fetch-site"];
+    const sites = Array.isArray(site) ? site : site ? [site] : [];
+    if (sites.some((value) => value === "cross-site" || value === "same-site")) {
+      reply.code(403).send({ error: "forbidden" });
       return;
     }
     done();
