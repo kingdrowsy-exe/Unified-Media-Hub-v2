@@ -12,7 +12,7 @@
     "build:web": "npm run build --prefix web",
     "build": "npm run build:server && npm run build:web",
     "start": "npm run build && electron .",
-    "dist": "npm run build && electron-builder --publish never"
+    "dist": "npm run build && electron-builder"
   },
   "dependencies": {
     "@fastify/cors": "^10.1.0",
@@ -38,6 +38,7 @@
       "web/dist/**/*"
     ],
     "icon": "build/icon.ico",
+    "publish": null,
     "win": {
       "target": "nsis",
       "signtoolOptions": {
