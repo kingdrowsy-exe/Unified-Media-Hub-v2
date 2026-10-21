@@ -46,19 +46,33 @@ function lanIps(): string[] {
 function expectRefused(ip: string, targetPort: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const socket = net.connect({ host: ip, port: targetPort });
-    const timer = setTimeout(() => {
-      socket.destroy();
-      reject(new Error(`timed out connecting to ${ip}:${targetPort} (socket may be open on all interfaces)`));
-    }, 1000);
-    socket.once("connect", () => {
+    const done = (err?: Error) => {
       clearTimeout(timer);
       socket.destroy();
-      reject(new Error(`connected to ${ip}:${targetPort}`));
+      if (err) reject(err);
+      else resolve();
+    };
+    // A completed handshake means something accepted the LAN connection.
+    // ECONNREFUSED is the usual closed-port result. A timeout is too: Windows
+    // Firewall on GitHub-hosted runners drops SYNs to the machine's own LAN
+    // address instead of resetting them, so the handshake never finishes.
+    const timer = setTimeout(() => done(), 1000);
+    socket.once("connect", () => {
+      done(new Error(`connected to ${ip}:${targetPort}`));
     });
     socket.once("error", (err: NodeJS.ErrnoException) => {
-      clearTimeout(timer);
-      if (err.code === "ECONNREFUSED") resolve();
-      else reject(err);
+      if (
+        err.code === "ECONNREFUSED" ||
+        err.code === "ECONNRESET" ||
+        err.code === "EACCES" ||
+        err.code === "EHOSTUNREACH" ||
+        err.code === "ENETUNREACH" ||
+        err.code === "ETIMEDOUT"
+      ) {
+        done();
+        return;
+      }
+      done(err);
     });
   });
 }
