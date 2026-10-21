@@ -17,6 +17,7 @@ import {
   startTraktLink,
   testConnection,
 } from "../api.js";
+import { APP_VERSION } from "../appVersion.js";
 
 type PlexLinkState =
   | { phase: "idle" }
@@ -514,7 +515,7 @@ export default function Settings() {
         )}
         {traktLink.phase === "error" && <div className="settings-error">{traktLink.message}</div>}
       </section>
-      <p className="settings-version">Unified Media Hub 2.0.0</p>
+      <p className="settings-version">Unified Media Hub {APP_VERSION}</p>
     </div>
   );
 }

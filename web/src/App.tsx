@@ -5,6 +5,7 @@ import OnDemand from "./pages/OnDemand.js";
 import Search from "./pages/Search.js";
 import Settings from "./pages/Settings.js";
 import { fetchSettingsStatus } from "./api.js";
+import { APP_VERSION } from "./appVersion.js";
 
 export default function App() {
   const [defaultRoute, setDefaultRoute] = useState<string | null>(null);
@@ -21,9 +22,12 @@ export default function App() {
   return (
     <div className="app-shell">
       <nav className="nav">
-        <NavLink to="/ondemand" className="nav-brand" aria-label="Unified Media Hub">
-          <img src="/logo.svg" alt="" width={32} height={32} />
-        </NavLink>
+        <div className="nav-side">
+          <NavLink to="/ondemand" className="nav-brand" aria-label="Unified Media Hub">
+            <img src="/logo.svg" alt="" width={32} height={32} />
+          </NavLink>
+          <span className="nav-version">v{APP_VERSION}</span>
+        </div>
         <div className="nav-inner">
           <NavLink to="/ondemand" className={({ isActive }) => (isActive ? "active" : "")}>
             On Demand

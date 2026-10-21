@@ -5,6 +5,7 @@ import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { test } from "node:test";
 import type { AddressInfo } from "node:net";
 import type { FastifyInstance } from "fastify";
@@ -74,7 +75,7 @@ test("upstream failures stay inside the request", async (t) => {
     fs.writeFileSync(
       script,
       `
-        import { startServer } from ${JSON.stringify(path.resolve("src/index.ts"))};
+        import { startServer } from ${JSON.stringify(pathToFileURL(path.resolve("src/index.ts")).href)};
         startServer().then(() => {
           setTimeout(() => {
             const err = new Error("other side closed");

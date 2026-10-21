@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  windows-installer:
+    name: Build Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm run install:all
+
+      - name: Test
+        run: npm test
+
+      - name: Build installer
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: |
+          Remove-Item Env:GITHUB_TOKEN -ErrorAction SilentlyContinue
+          Remove-Item Env:GH_TOKEN -ErrorAction SilentlyContinue
+          npm run dist -- --publish never
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if [[ ! "${tag}" =~ ^v[0-9] ]]; then
+            echo "Ref '${tag}' is not a version tag. Run this workflow from a v* tag."
+            exit 1
+          fi
+          shopt -s nullglob
+          exes=(release/*.exe)
+          maps=(release/*.exe.blockmap)
+          if (( ${#exes[@]} == 0 )); then
+            echo "No NSIS installer (.exe) found in release/"
+            ls -la release || true
+            exit 1
+          fi
+          assets=("${exes[@]}" "${maps[@]}")
+          echo "Uploading:"
+          printf '  %s\n' "${assets[@]}"
+          cat > "${RUNNER_TEMP}/release-notes.md" <<'EOF'
+          Unified Media Hub 2.0.0
+
+          - Live TV no longer jumps back and forth.
+          - Security hardening for the local API, stream proxy, and stored credentials.
+          - This installer is unsigned. If Windows SmartScreen warns you, choose More info, then Run anyway.
+          EOF
+          title="Unified Media Hub ${tag#v}"
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            gh release upload "${tag}" "${assets[@]}" --clobber
+            gh release edit "${tag}" --title "${title}" --notes-file "${RUNNER_TEMP}/release-notes.md"
+          else
+            gh release create "${tag}" "${assets[@]}" \
+              --verify-tag \
+              --title "${title}" \
+              --notes-file "${RUNNER_TEMP}/release-notes.md"
+          fi
