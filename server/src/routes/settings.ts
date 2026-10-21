@@ -10,6 +10,7 @@ import {
 } from "../clients/trakt.js";
 import { bustCache } from "../cache.js";
 import { listSections } from "../clients/plex.js";
+import { clearLearnedStreamHosts } from "../streamAllowlist.js";
 
 interface PendingPin {
   id: number;
@@ -24,6 +25,22 @@ interface PendingTraktDevice {
 }
 
 let pendingTraktDevice: PendingTraktDevice | null = null;
+
+function normalizeBaseUrl(baseUrl: string): string {
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    throw new Error("Server URL is not valid.");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("Server URL must start with http:// or https://.");
+  }
+  if (url.username || url.password) {
+    throw new Error("Put the username and password in their own fields, not in the server URL.");
+  }
+  return baseUrl.replace(/\/+$/, "");
+}
 
 async function validateSilo(baseUrl: string, username: string, password: string) {
   const res = await fetch(`${baseUrl.replace(/\/+$/, "")}/api/v1/auth/login`, {
@@ -79,13 +96,15 @@ export async function settingsRoutes(app: FastifyInstance) {
     if (!baseUrl || !username || !password) {
       return reply.code(400).send({ error: "baseUrl, username, and password are required" });
     }
-    const cleanBaseUrl = baseUrl.replace(/\/+$/, "");
+    let cleanBaseUrl: string;
     try {
+      cleanBaseUrl = normalizeBaseUrl(baseUrl);
       await validateSilo(cleanBaseUrl, username, password);
     } catch (err) {
       return reply.code(400).send({ error: (err as Error).message });
     }
     settingsStore.setSilo({ baseUrl: cleanBaseUrl, username, password });
+    clearLearnedStreamHosts();
     resetSiloSession();
     bustCache("ondemand:");
     bustCache("popular:");
@@ -95,6 +114,7 @@ export async function settingsRoutes(app: FastifyInstance) {
 
   app.delete("/api/settings/silo", async () => {
     settingsStore.clearSilo();
+    clearLearnedStreamHosts();
     resetSiloSession();
     bustCache("ondemand:");
     bustCache("popular:");
@@ -111,19 +131,22 @@ export async function settingsRoutes(app: FastifyInstance) {
     if (!baseUrl || !username || !password) {
       return reply.code(400).send({ error: "baseUrl, username, and password are required" });
     }
-    const cleanBaseUrl = baseUrl.replace(/\/+$/, "");
+    let cleanBaseUrl: string;
     try {
+      cleanBaseUrl = normalizeBaseUrl(baseUrl);
       await validateXtream(cleanBaseUrl, username, password);
     } catch (err) {
       return reply.code(400).send({ error: (err as Error).message });
     }
     settingsStore.setXtream({ baseUrl: cleanBaseUrl, username, password });
+    clearLearnedStreamHosts();
     bustCache("live:");
     return { ok: true };
   });
 
   app.delete("/api/settings/xtream", async () => {
     settingsStore.clearXtream();
+    clearLearnedStreamHosts();
     bustCache("live:");
     return { ok: true };
   });
@@ -149,6 +172,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     try {
       const server = await resolveServerFromAuthToken(pin.authToken);
       settingsStore.setPlex(server);
+      clearLearnedStreamHosts();
       pendingPin = null;
       bustCache("ondemand:");
       bustCache("popular:");
@@ -161,6 +185,7 @@ export async function settingsRoutes(app: FastifyInstance) {
 
   app.delete("/api/settings/plex", async () => {
     settingsStore.clearPlex();
+    clearLearnedStreamHosts();
     bustCache("ondemand:");
     bustCache("popular:");
     bustCache("trakt:");

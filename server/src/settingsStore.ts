@@ -1,8 +1,35 @@
+import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ENCRYPTED_PREFIX = "enc:v1:";
+
+function safeStorageOrNull(): {
+  encryptString: (plainText: string) => Buffer;
+  decryptString: (encrypted: Buffer) => string;
+} | null {
+  // Requiring the `electron` package from plain Node downloads and launches
+  // Electron. Only the real Electron process sets process.versions.electron.
+  if (!process.versions.electron) return null;
+  try {
+    const electron = require("electron") as {
+      safeStorage?: {
+        isEncryptionAvailable: () => boolean;
+        encryptString: (plainText: string) => Buffer;
+        decryptString: (encrypted: Buffer) => string;
+      };
+    };
+    const safeStorage = electron.safeStorage;
+    if (!safeStorage?.isEncryptionAvailable()) return null;
+    return safeStorage;
+  } catch {
+    // Standalone `node` and the test runner have no Electron.
+    return null;
+  }
+}
 // The packaged Electron app points this at Electron's per-user app-data folder
 // (writable regardless of where the app itself is installed); running the server
 // standalone falls back to a data/ folder next to the compiled server code.
@@ -49,19 +76,45 @@ interface Settings {
 
 let cache: Settings | null = null;
 
+function readSettingsText(): { json: string; encrypted: boolean } {
+  const raw = fs.readFileSync(settingsPath, "utf-8");
+  if (!raw.startsWith(ENCRYPTED_PREFIX)) return { json: raw, encrypted: false };
+  const safeStorage = safeStorageOrNull();
+  if (!safeStorage) {
+    throw new Error(
+      "settings.json is encrypted with Electron safeStorage. Open the desktop app to read it.",
+    );
+  }
+  const decoded = Buffer.from(raw.slice(ENCRYPTED_PREFIX.length), "base64");
+  return { json: safeStorage.decryptString(decoded), encrypted: true };
+}
+
 function load(): Settings {
   if (cache) return cache;
-  if (fs.existsSync(settingsPath)) {
-    cache = JSON.parse(fs.readFileSync(settingsPath, "utf-8")) as Settings;
-  } else {
+  if (!fs.existsSync(settingsPath)) {
     cache = {};
+    return cache;
   }
+  const { json, encrypted } = readSettingsText();
+  cache = JSON.parse(json) as Settings;
+  // Upgrade a plaintext file the first time the desktop app opens it.
+  if (!encrypted && safeStorageOrNull()) persist();
   return cache;
 }
 
 function persist() {
   fs.mkdirSync(dataDir, { recursive: true });
-  fs.writeFileSync(settingsPath, JSON.stringify(cache, null, 2));
+  const json = JSON.stringify(cache, null, 2);
+  const safeStorage = safeStorageOrNull();
+  const body = safeStorage
+    ? ENCRYPTED_PREFIX + safeStorage.encryptString(json).toString("base64")
+    : json;
+  fs.writeFileSync(settingsPath, body, { mode: 0o600 });
+  try {
+    fs.chmodSync(settingsPath, 0o600);
+  } catch {
+    // Windows ignores chmod. safeStorage (DPAPI) is the protection there.
+  }
 }
 
 export const settingsStore = {
