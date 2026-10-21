@@ -69,7 +69,7 @@ function FullscreenIcon() {
 export default function InlinePlayer({ src, icon, title, subtitle }: InlinePlayerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const { error, playing: loaded } = useHlsVideo(videoRef, src, true);
+  const { error, playing: loaded } = useHlsVideo(videoRef, src, true, true);
   const [paused, setPaused] = useState(true);
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(DEFAULT_VOLUME);

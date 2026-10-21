@@ -26,7 +26,7 @@ export default function Tile({
   if (year) metaParts.push(String(year));
 
   return (
-    <div className={`tile ${owned ? "" : "tile-unowned"}`} onClick={onClick} tabIndex={0}>
+    <button type="button" className={`tile ${owned ? "" : "tile-unowned"}`} onClick={onClick}>
       <div className={`tile-art ${shape}`}>
         {image ? <img src={image} alt="" loading="lazy" /> : <div className="tile-art-empty" />}
       </div>
@@ -54,6 +54,6 @@ export default function Tile({
           </div>
         )
       )}
-    </div>
+    </button>
   );
 }

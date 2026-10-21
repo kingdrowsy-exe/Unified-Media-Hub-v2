@@ -210,6 +210,20 @@ a {
   color: var(--text-muted);
 }
 
+.settings-version {
+  margin: 8px 0 24px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.settings-insecure {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
 .notice a {
   color: var(--accent);
 }
@@ -577,6 +591,29 @@ a {
 }
 
 /* ---------- Tiles ---------- */
+
+button.tile,
+button.guide-row,
+button.live-category {
+  font: inherit;
+  background: none;
+  border: none;
+  text-align: inherit;
+}
+
+button.tile,
+button.guide-row {
+  color: inherit;
+}
+
+button.live-category {
+  color: var(--text-muted);
+}
+
+button.guide-row,
+button.live-category {
+  width: 100%;
+}
 
 .tile {
   flex: 0 0 auto;
